@@ -4,19 +4,11 @@ import pandas as pd
 
 
 # =========================================================
-# 1. 날짜 Feature
+# 1. 날짜 피처 생성
 # =========================================================
 
 def add_date_features(df):
-    """
-    date 컬럼에서 날짜 관련 feature 생성.
 
-    - year: 연도
-    - month: 월
-    - day: 일
-    - dayofweek: 요일 (월=0, 일=6)
-    - is_weekend: 주말 여부 (0/1)
-    """
     df = df.copy()
 
     df["date"] = pd.to_datetime(df["date"])
@@ -25,25 +17,24 @@ def add_date_features(df):
     df["month"] = df["date"].dt.month
     df["day"] = df["date"].dt.day
     df["dayofweek"] = df["date"].dt.dayofweek
-    df["is_weekend"] = (df["dayofweek"] >= 5).astype(int)
+
+    df["is_weekend"] = (
+        df["dayofweek"] >= 5
+    ).astype(int)
 
     return df
 
 
 # =========================================================
-# 2. Promotion Feature
+# 2. 프로모션 피처 생성
 # =========================================================
 
 def add_promotion_features(df):
-    """
-    프로모션 관련 파생 피처 생성.
 
-    - onpromotion_log: log1p 변환
-    - is_promotion: 프로모션 존재 여부 (0/1)
-    """
     df = df.copy()
 
     df["onpromotion_log"] = np.log1p(df["onpromotion"])
+
     df["is_promotion"] = (
         df["onpromotion"] > 0
     ).astype(int)
@@ -52,36 +43,25 @@ def add_promotion_features(df):
 
 
 # =========================================================
-# 3. Categorical Feature
+# 3. 범주형 피처 변환
 # =========================================================
 
 def add_categorical_features(df):
-    """
-    매장 및 상품군을 범주형으로 변환.
-    """
+
     df = df.copy()
 
-    categorical_cols = [
-        "store_nbr",
-        "family"
-    ]
-
-    for col in categorical_cols:
-        df[col] = df[col].astype("category")
+    df["store_nbr"] = df["store_nbr"].astype("category")
+    df["family"] = df["family"].astype("category")
 
     return df
 
 
 # =========================================================
-# 4. Holiday Event Group 생성
+# 4. Holiday 이벤트 그룹 분류
 # =========================================================
 
 def add_event_group(holidays):
-    """
-    description을 기반으로 비슷한 이벤트를 그룹화.
 
-    description 원본은 보존합니다.
-    """
     holidays = holidays.copy()
 
     description = (
@@ -99,9 +79,14 @@ def add_event_group(holidays):
         "Mothers Day": r"dia de la madre",
         "Independence Day": r"independencia",
         "City Foundation": r"fundacion",
+
+        # 추가된 이벤트 그룹
+        "Good Friday": r"viernes santo",
+        "Labor Day": r"dia del trabajo"
     }
 
     for group, pattern in event_patterns.items():
+
         mask = description.str.contains(
             pattern,
             regex=True,
@@ -114,20 +99,11 @@ def add_event_group(holidays):
 
 
 # =========================================================
-# 5. Holiday Feature
+# 5. Holiday 데이터 피처 엔지니어링
 # =========================================================
 
 def add_holiday_features(holidays):
-    """
-    Holiday 데이터 자료형 변환.
 
-    - type: 이벤트 종류
-    - locale: 적용 범위
-    - locale_name: 적용 지역
-    - description: 이벤트 원본 이름
-    - event_group: 유사 이벤트 그룹
-    - transferred: 이동 여부 (bool)
-    """
     holidays = holidays.copy()
 
     holidays["date"] = pd.to_datetime(holidays["date"])
@@ -145,28 +121,28 @@ def add_holiday_features(holidays):
     for col in categorical_cols:
         holidays[col] = holidays[col].astype("category")
 
-    holidays["transferred"] = (
-        holidays["transferred"].astype(bool)
-    )
+    holidays["transferred"] = holidays["transferred"].astype(bool)
 
     return holidays
 
 
 # =========================================================
-# 6. Event Group Binary Features (National Only)
+# 6. National 이벤트별 0/1 피처 생성
 # =========================================================
 
 def add_event_binary_features(holidays):
-    """
-    National 이벤트별 0/1 피처 생성.
 
-    - National만 사용
-    - 같은 날짜에 여러 이벤트가 있으면 각각 표시
-    - 날짜별로 하나의 행으로 집계
-    """
+    # -----------------------------------------------------
+    # 1. National 이벤트만 선택
+    # -----------------------------------------------------
+
     national = holidays[
         holidays["locale"] == "National"
     ].copy()
+
+    # -----------------------------------------------------
+    # 2. 이벤트 그룹별 컬럼 이름 지정
+    # -----------------------------------------------------
 
     event_names = {
         "Christmas": "event_christmas",
@@ -175,17 +151,30 @@ def add_event_binary_features(holidays):
         "Mothers Day": "event_mothers_day",
         "Independence Day": "event_independence_day",
         "City Foundation": "event_city_foundation",
+
+        # 추가된 이벤트별 0/1 피처
+        "Good Friday": "event_good_friday",
+        "Labor Day": "event_labor_day",
+
         "Other": "event_other"
     }
 
+    # -----------------------------------------------------
+    # 3. 이벤트별 0/1 컬럼 생성
+    # -----------------------------------------------------
+
     for group, col in event_names.items():
+
         national[col] = (
             national["event_group"] == group
         ).astype(int)
 
     event_cols = list(event_names.values())
 
-    # 같은 날짜의 복수 이벤트를 0/1로 통합
+    # -----------------------------------------------------
+    # 4. 날짜별 이벤트 존재 여부 집계
+    # -----------------------------------------------------
+
     event_daily = (
         national
         .groupby("date")[event_cols]
@@ -197,23 +186,17 @@ def add_event_binary_features(holidays):
 
 
 # =========================================================
-# 7. Holiday Merge (National Only)
+# 7. National Holiday 피처 병합
 # =========================================================
 
 def merge_holiday_features(df, holidays):
-    """
-    판매 데이터에 National 이벤트 정보를 병합합니다.
 
-    - National 이벤트만 사용
-    - 같은 날짜의 복수 이벤트 집계
-    - left merge로 판매 데이터 행 수 유지
-    - 문자열 집계 피처와 이벤트별 0/1 피처 보존
-    """
     df = df.copy()
+
     original_rows = len(df)
 
     # -----------------------------------------------------
-    # 1. National 이벤트 선택
+    # 1. National 이벤트만 선택
     # -----------------------------------------------------
 
     national = holidays[
@@ -284,7 +267,7 @@ def merge_holiday_features(df, holidays):
     )
 
     # -----------------------------------------------------
-    # 5. 이벤트가 없는 날짜 처리
+    # 5. Holiday 결측치 처리
     # -----------------------------------------------------
 
     df["holiday_count"] = (
@@ -293,13 +276,14 @@ def merge_holiday_features(df, holidays):
         .astype(int)
     )
 
-    categorical_cols = [
+    holiday_text_cols = [
         "holiday_types",
         "event_groups",
         "holiday_descriptions"
     ]
 
-    for col in categorical_cols:
+    for col in holiday_text_cols:
+
         df[col] = (
             df[col]
             .fillna("None")
@@ -313,13 +297,16 @@ def merge_holiday_features(df, holidays):
         .astype(int)
     )
 
-    # 전국 이벤트 존재 여부
+    # -----------------------------------------------------
+    # 6. National 이벤트 존재 여부
+    # -----------------------------------------------------
+
     df["has_national_event"] = (
         df["holiday_count"] > 0
     )
 
     # -----------------------------------------------------
-    # 6. 병합 검증
+    # 7. 병합 후 행 수 검증
     # -----------------------------------------------------
 
     assert len(df) == original_rows, (
@@ -330,42 +317,33 @@ def merge_holiday_features(df, holidays):
 
 
 # =========================================================
-# 8. 전체 Feature Engineering
+# 8. 일반 Feature Engineering 파이프라인
 # =========================================================
 
 def apply_feature_engineering(df):
-    """
-    판매 데이터 기본 Feature Engineering.
 
-    1) 날짜 피처
-    2) 프로모션 피처
-    3) 범주형 변환
-
-    Holiday 병합은 main.py에서 별도로 실행합니다.
-    """
     df = add_date_features(df)
+
     df = add_promotion_features(df)
+
     df = add_categorical_features(df)
 
     return df
 
 
 # =========================================================
-# 9. Holiday 실험용 피처 조합
+# 9. Holiday 피처 실험용 목록
 # =========================================================
 
-# 실험 A: 문자열 Event Group
+# A: 문자열 기반 Holiday 피처
 HOLIDAY_FEATURES_A = [
     "holiday_types",
     "event_groups",
-    "holiday_count",
-    "has_national_event"
+    "holiday_descriptions"
 ]
 
-# 실험 B: 이벤트별 0/1 피처
+# B: 이벤트별 0/1 기반 Holiday 피처
 HOLIDAY_FEATURES_B = [
-    "holiday_types",
-    "holiday_count",
     "has_national_event",
     "event_christmas",
     "event_new_year",
@@ -373,21 +351,13 @@ HOLIDAY_FEATURES_B = [
     "event_mothers_day",
     "event_independence_day",
     "event_city_foundation",
+    "event_good_friday",
+    "event_labor_day",
     "event_other"
 ]
 
-# 실험 C: 문자열 + 0/1 피처
-HOLIDAY_FEATURES_C = [
-    "holiday_types",
-    "event_groups",
-    "holiday_descriptions",
-    "holiday_count",
-    "has_national_event",
-    "event_christmas",
-    "event_new_year",
-    "event_carnival",
-    "event_mothers_day",
-    "event_independence_day",
-    "event_city_foundation",
-    "event_other"
-]
+# C: 문자열 + 이벤트별 0/1 피처
+HOLIDAY_FEATURES_C = (
+    HOLIDAY_FEATURES_A
+    + HOLIDAY_FEATURES_B
+)
