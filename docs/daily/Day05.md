@@ -215,6 +215,7 @@ Feature Importance (Experiment 02, 상위 7개 + 특이점):
 - 한 줄 정리: **EDA·전처리·피처 엔지니어링을 마무리하고 LightGBM Baseline으로 Validation RMSLE 0.440020, 첫 제출에서 Public RMSLE 0.49044(304위)를 확보한 날이다. 이제부터는 과거 판매량을 누수 없이 활용하는 시계열 피처 개선이 핵심이다.**
 
 ## 다음
+0. 제출파일 저장 경로 설정 및 깃에 올리지 않게 설정하기
 
 1. `modeling.md`와 `experiments.md` 작성
    - `modeling.md`의 Experiment 02에 Public RMSLE 0.49044(304위) 기록
