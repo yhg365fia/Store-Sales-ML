@@ -5,8 +5,14 @@ import lightgbm as lgb
 from main import main
 from feature_engineering import (
     add_lag_features,
+    add_rolling_features,
     LAGS,
     LAG_FEATURES,
+    ROLLING_SHIFT,
+    ROLLING_WINDOWS,
+    ROLLING_FEATURES,
+    ROLLING_MEAN_FEATURES,
+    ROLLING_STD_FEATURES,
 )
 
 
@@ -15,7 +21,7 @@ from feature_engineering import (
 # =========================================================
 
 # Lag 추가 전 결과에서 가져온 임시 값.
-# 최종 학습 전 Lag 추가 후 백테스트 결과를 보고 조정.
+# 최종 학습 전 Lag + Rolling mean / std 추가 후 백테스트 결과로 조정.
 BEST_ITERATION = 4044
 
 BASE_FEATURE_COLS = [
@@ -51,7 +57,9 @@ BASE_FEATURE_COLS = [
     "event_other",
 ]
 
-FEATURE_COLS = BASE_FEATURE_COLS + LAG_FEATURES
+TIME_SERIES_FEATURES = LAG_FEATURES + ROLLING_FEATURES
+
+FEATURE_COLS = BASE_FEATURE_COLS + TIME_SERIES_FEATURES
 
 CATEGORICAL_COLS = [
     "store_nbr",
@@ -95,7 +103,7 @@ def main_submission():
     train_fe["_is_test"] = False
     test_fe["_is_test"] = True
 
-    # Lag 계산 후 Test의 원래 순서를 복원하기 위한 값
+    # Lag / Rolling 계산 후 Test의 원래 순서를 복원하기 위한 값
     train_fe["_test_order"] = -1
     test_fe["_test_order"] = np.arange(test_count)
 
@@ -114,7 +122,7 @@ def main_submission():
     key_cols = ["date"] + group_cols
 
     # -----------------------------------------------------
-    # 3. Lag 생성 전 QC
+    # 3. Lag / Rolling 생성 전 QC
     # -----------------------------------------------------
 
     assert not combined[key_cols].isna().any().any(), (
@@ -171,13 +179,24 @@ def main_submission():
         "Test 기간의 판매량을 참조합니다."
     )
 
+    assert ROLLING_SHIFT >= (test_end - train_end).days, (
+        "Rolling shift가 예측 기간보다 짧아 "
+        "Test 기간의 판매량을 참조합니다."
+    )
+
     # -----------------------------------------------------
-    # 4. 연결한 데이터에서 Lag 계산
+    # 4. 연결한 데이터에서 Lag + Rolling mean / std 계산
     # -----------------------------------------------------
 
     combined = add_lag_features(
         combined,
         lags=LAGS,
+    )
+
+    combined = add_rolling_features(
+        combined,
+        shift=ROLLING_SHIFT,
+        windows=ROLLING_WINDOWS,
     )
 
     # 각 그룹의 처음 lag개 행에만 결측치가 있어야 함.
@@ -198,6 +217,17 @@ def main_submission():
             f"{col}: 초기 과거 기록 부족 이외의 "
             "결측치가 발생했습니다."
         )
+
+    # 완전한 Rolling 구간을 확보하기 전의 초기 결측치만 허용
+    for window in ROLLING_WINDOWS:
+        expected_missing = group_position < (ROLLING_SHIFT + window - 1)
+
+        for stat in ("mean", "std"):
+            col = f"sales_rolling_{stat}_{ROLLING_SHIFT}_{window}"
+
+            assert combined[col].isna().eq(expected_missing).all(), (
+                f"{col}: 초기 과거 기록 부족 이외의 결측치가 발생했습니다."
+            )
 
     # -----------------------------------------------------
     # 5. 전체 Train / Test 다시 분리
@@ -224,19 +254,23 @@ def main_submission():
     )
 
     assert len(full_train) == train_count, (
-        "Lag 생성 전후 Train 행 수가 다릅니다."
+        "Lag / Rolling 생성 전후 Train 행 수가 다릅니다."
     )
 
     assert len(test_fe) == test_count, (
-        "Lag 생성 전후 Test 행 수가 다릅니다."
+        "Lag / Rolling 생성 전후 Test 행 수가 다릅니다."
     )
 
-    print("\n===== LAG FEATURES =====")
+    print("\n===== TIME SERIES FEATURES =====")
     print("Lags:", LAGS)
-    print("Train Lag 결측치:")
-    print(full_train[LAG_FEATURES].isna().sum())
-    print("Test Lag 결측치:")
-    print(test_fe[LAG_FEATURES].isna().sum())
+    print("Rolling shift:", ROLLING_SHIFT)
+    print("Rolling windows:", ROLLING_WINDOWS)
+    print("Rolling mean 피처:", ROLLING_MEAN_FEATURES)
+    print("Rolling std 피처:", ROLLING_STD_FEATURES)
+    print("Train Lag / Rolling 결측치:")
+    print(full_train[TIME_SERIES_FEATURES].isna().sum())
+    print("Test Lag / Rolling 결측치:")
+    print(test_fe[TIME_SERIES_FEATURES].isna().sum())
 
     # -----------------------------------------------------
     # 6. 모델 입력 데이터 준비
@@ -270,7 +304,7 @@ def main_submission():
         "Train의 기존 피처에 결측치가 있습니다."
     )
 
-    # Train의 초기 Lag 결측치는 그대로 유지.
+    # Train의 초기 Lag / Rolling 결측치는 그대로 유지.
     # 위에서 정상적인 위치인지 검증했고,
     # LightGBM이 결측값으로 처리하도록 함.
 
@@ -278,7 +312,7 @@ def main_submission():
         "Train Target에 결측치가 있습니다."
     )
 
-    # Test는 기존 피처와 Lag 모두 결측치가 없어야 함
+    # Test는 기존 피처와 Lag / Rolling 모두 결측치가 없어야 함
     assert not X_test.isna().any().any(), (
         "Test 입력 피처에 결측치가 있습니다."
     )
