@@ -23,7 +23,7 @@ from feature_engineering import (
 
 
 # =========================================================
-# 1. 피처 및 학습 설정
+# 1. 기본 피처
 # =========================================================
 
 BASE_FEATURES = [
@@ -33,13 +33,16 @@ BASE_FEATURES = [
     "state",
     "type",
     "cluster",
+
     "year",
     "month",
     "day",
     "dayofweek",
     "is_weekend",
+
     "onpromotion",
     "is_promotion",
+
     "holiday_count",
     "event_christmas",
     "event_new_year",
@@ -52,6 +55,7 @@ BASE_FEATURES = [
     "event_other",
 ]
 
+
 CATEGORICAL_FEATURES = [
     "store_nbr",
     "family",
@@ -61,21 +65,72 @@ CATEGORICAL_FEATURES = [
     "cluster",
 ]
 
-TIME_SERIES_FEATURES = (
-    LAG_FEATURES
-    + ROLLING_MEAN_FEATURES
-)
 
-FEATURES = BASE_FEATURES + TIME_SERIES_FEATURES
+# =========================================================
+# 2. 현재 최고 Rolling 구성
+# =========================================================
 
-# 이번 실험의 변경 사항: 50 → 150
-EARLY_STOPPING_ROUNDS = 150
+# Mean14는 이전 실험에서 제거했을 때 개선되었으므로
+# 모델에서는 Mean7 / Mean28만 사용
 
-FORECAST_HORIZON = 16
+SELECTED_ROLLING_MEAN_FEATURES = [
+    "sales_rolling_mean_16_7",
+    "sales_rolling_mean_16_28",
+]
 
 
 # =========================================================
-# 2. 검증 구간 설정
+# 3. 1년 주기 Lag
+# =========================================================
+
+# 364일 = 52주
+# 약 1년 전의 같은 요일 판매량
+
+YEAR_LAG = 364
+
+YEAR_LAG_FEATURE = "sales_lag_364"
+
+
+# =========================================================
+# 4. 모델 입력 피처
+# =========================================================
+
+TIME_SERIES_FEATURES = (
+    LAG_FEATURES
+    + SELECTED_ROLLING_MEAN_FEATURES
+    + [YEAR_LAG_FEATURE]
+)
+
+
+FEATURES = (
+    BASE_FEATURES
+    + TIME_SERIES_FEATURES
+)
+
+
+TARGET_COL = "sales_log"
+
+FORECAST_HORIZON = 16
+
+EARLY_STOPPING_ROUNDS = 150
+
+
+# =========================================================
+# 5. 현재 최고 모델 결과
+# =========================================================
+
+BASELINE_RMSLE = 0.391424
+
+
+BASELINE_FOLD_RMSLE = {
+    "Fold 1": 0.385976,
+    "Fold 2": 0.393941,
+    "Fold 3": 0.394357,
+}
+
+
+# =========================================================
+# 6. Rolling Backtesting Fold
 # =========================================================
 
 FOLDS = [
@@ -101,55 +156,195 @@ FOLDS = [
 
 
 # =========================================================
-# 3. 설정 확인
+# 7. 설정 확인
 # =========================================================
 
 def validate_configuration():
 
     if tuple(LAGS) != (16, 21, 28):
+
         raise ValueError(
-            "feature_engineering.py의 LAGS를 "
-            "(16, 21, 28)로 설정하세요."
+            "feature_engineering.py의 LAGS는 "
+            "(16, 21, 28)이어야 합니다."
         )
 
-    if tuple(ROLLING_WINDOWS) != (7, 14, 28):
-        raise ValueError(
-            "feature_engineering.py의 ROLLING_WINDOWS를 "
-            "(7, 14, 28)로 설정하세요."
-        )
 
     if ROLLING_SHIFT != 16:
+
         raise ValueError(
             "ROLLING_SHIFT는 16이어야 합니다."
         )
 
-    expected_features = [
-        "sales_lag_16",
-        "sales_lag_21",
-        "sales_lag_28",
+
+    if tuple(ROLLING_WINDOWS) != (7, 14, 28):
+
+        raise ValueError(
+            "ROLLING_WINDOWS는 "
+            "(7, 14, 28)이어야 합니다."
+        )
+
+
+    expected_generated_rolling = [
         "sales_rolling_mean_16_7",
         "sales_rolling_mean_16_14",
         "sales_rolling_mean_16_28",
     ]
 
-    if TIME_SERIES_FEATURES != expected_features:
+
+    if (
+        ROLLING_MEAN_FEATURES
+        != expected_generated_rolling
+    ):
+
         raise ValueError(
-            "시계열 피처 구성이 이번 실험 설정과 다릅니다.\n"
-            f"예상: {expected_features}\n"
+            "생성되는 Rolling Mean 구성이 "
+            "예상과 다릅니다.\n"
+            f"예상: {expected_generated_rolling}\n"
+            f"현재: {ROLLING_MEAN_FEATURES}"
+        )
+
+
+    expected_time_series_features = [
+        "sales_lag_16",
+        "sales_lag_21",
+        "sales_lag_28",
+        "sales_rolling_mean_16_7",
+        "sales_rolling_mean_16_28",
+        "sales_lag_364",
+    ]
+
+
+    if (
+        TIME_SERIES_FEATURES
+        != expected_time_series_features
+    ):
+
+        raise ValueError(
+            "이번 실험의 시계열 피처가 "
+            "예상과 다릅니다.\n"
+            f"예상: {expected_time_series_features}\n"
             f"현재: {TIME_SERIES_FEATURES}"
         )
 
+
+    # Mean14는 생성만 하고 모델에는 넣지 않음
+    if (
+        "sales_rolling_mean_16_14"
+        in FEATURES
+    ):
+
+        raise ValueError(
+            "Rolling Mean 14가 모델 입력에 "
+            "포함되어 있습니다."
+        )
+
+
+    # EMA는 이번 실험에서 전부 제외
+    ema_features = [
+        feature
+        for feature in FEATURES
+        if "ema" in feature.lower()
+    ]
+
+
+    if ema_features:
+
+        raise ValueError(
+            "이번 Lag364 실험에는 "
+            "EMA가 들어가면 안 됩니다.\n"
+            f"{ema_features}"
+        )
+
+
     if len(FEATURES) != len(set(FEATURES)):
-        raise ValueError("피처 목록에 중복이 있습니다.")
+
+        raise ValueError(
+            "FEATURES에 중복 피처가 있습니다."
+        )
+
+
+    # Base23
+    # + Lag3
+    # + Rolling2
+    # + Lag364 1
+    # = 29
 
     if len(FEATURES) != 29:
+
         raise ValueError(
-            f"입력 피처는 29개여야 합니다: {len(FEATURES)}개"
+            f"이번 실험은 총 29개 피처여야 합니다. "
+            f"현재: {len(FEATURES)}개"
         )
 
 
 # =========================================================
-# 4. 시계열 피처 생성 및 QC
+# 8. Lag 364 생성
+# =========================================================
+
+def add_year_lag_feature(df):
+
+    """
+    매장 × 상품군별 sales_lag_364 생성.
+
+    364일 = 52주이므로
+    약 1년 전의 같은 요일 판매량을 가져온다.
+
+    예:
+    2017년 화요일
+    → 364일 전도 화요일
+
+    Validation/Test의 미래 sales는 사용하지 않는다.
+    """
+
+    if YEAR_LAG < FORECAST_HORIZON:
+
+        raise ValueError(
+            "YEAR_LAG는 예측 기간보다 "
+            "짧을 수 없습니다."
+        )
+
+
+    df = df.copy()
+
+    df["date"] = pd.to_datetime(
+        df["date"]
+    )
+
+
+    keys = [
+        "store_nbr",
+        "family",
+    ]
+
+
+    df = (
+        df
+        .sort_values(
+            keys + ["date"]
+        )
+        .reset_index(drop=True)
+    )
+
+
+    df[YEAR_LAG_FEATURE] = (
+
+        df
+        .groupby(
+            keys,
+            observed=True
+        )["sales"]
+
+        .shift(
+            YEAR_LAG
+        )
+    )
+
+
+    return df
+
+
+# =========================================================
+# 9. 시계열 피처 전체 생성
 # =========================================================
 
 def prepare_time_series_features(df):
@@ -158,11 +353,13 @@ def prepare_time_series_features(df):
 
     df = df.copy()
 
+
     required_columns = [
         "date",
         "sales",
         *BASE_FEATURES,
     ]
+
 
     missing_columns = [
         column
@@ -170,63 +367,139 @@ def prepare_time_series_features(df):
         if column not in df.columns
     ]
 
+
     if missing_columns:
+
         raise ValueError(
-            f"필수 컬럼이 없습니다: {missing_columns}"
+            f"필수 컬럼이 없습니다: "
+            f"{missing_columns}"
         )
 
-    df["date"] = pd.to_datetime(df["date"])
 
-    keys = ["store_nbr", "family"]
+    df["date"] = pd.to_datetime(
+        df["date"]
+    )
 
-    if df[keys + ["date"]].isna().any().any():
+
+    keys = [
+        "store_nbr",
+        "family",
+    ]
+
+
+    # -----------------------------------------------------
+    # 기본 QC
+    # -----------------------------------------------------
+
+    if df[
+        keys + ["date"]
+    ].isna().any().any():
+
         raise ValueError(
-            "매장, 상품군 또는 날짜에 결측치가 있습니다."
+            "store_nbr / family / date에 "
+            "결측치가 있습니다."
         )
 
-    if df.duplicated(keys + ["date"]).any():
+
+    if df.duplicated(
+        keys + ["date"]
+    ).any():
+
         raise ValueError(
-            "동일한 매장 × 상품군 × 날짜가 중복되어 있습니다."
+            "동일한 store_nbr × family × date가 "
+            "중복되어 있습니다."
         )
 
-    sales_values = df["sales"].to_numpy(dtype=float)
+
+    sales_values = (
+        df["sales"]
+        .to_numpy(
+            dtype=float
+        )
+    )
+
+
+    if not np.isfinite(
+        sales_values
+    ).all():
+
+        raise ValueError(
+            "sales에 NaN 또는 무한대가 있습니다."
+        )
+
 
     if (
-        not np.isfinite(sales_values).all()
-        or (sales_values < 0).any()
-    ):
+        sales_values < 0
+    ).any():
+
         raise ValueError(
-            "학습 데이터의 sales는 결측치 없이 "
-            "유한한 0 이상의 값이어야 합니다."
+            "sales에 음수가 있습니다."
         )
 
+
+    # -----------------------------------------------------
+    # 정렬
+    # -----------------------------------------------------
+
     df = (
-        df.sort_values(keys + ["date"])
+        df
+        .sort_values(
+            keys + ["date"]
+        )
         .reset_index(drop=True)
     )
 
-    # 행 기반 shift가 실제 일 단위를 의미하는지 확인
+
+    # -----------------------------------------------------
+    # 날짜 연속성 QC
+    #
+    # Lag는 row 기준이므로
+    # 1 row = 1 day여야 함
+    # -----------------------------------------------------
+
     date_diff = (
-        df.groupby(keys, observed=True)["date"]
+
+        df
+        .groupby(
+            keys,
+            observed=True
+        )["date"]
+
         .diff()
     )
 
+
     invalid_gap = (
         date_diff.notna()
-        & date_diff.ne(pd.Timedelta(days=1))
+        & date_diff.ne(
+            pd.Timedelta(days=1)
+        )
     )
 
+
     if invalid_gap.any():
+
         raise ValueError(
-            "매장 × 상품군별 날짜가 연속적이지 않습니다. "
-            "전처리에서 누락 날짜를 확인하세요."
+            "매장 × 상품군 시계열의 날짜가 "
+            "연속적이지 않습니다."
         )
 
-    # 원본 판매량으로 시계열 피처 생성
+
+    # -----------------------------------------------------
+    # Lag 16 / 21 / 28
+    # -----------------------------------------------------
+
     df = add_lag_features(
         df,
         lags=LAGS,
     )
+
+
+    # -----------------------------------------------------
+    # Rolling Mean 7 / 14 / 28 생성
+    #
+    # 모델에서는 Mean7 / Mean28만 사용
+    # -----------------------------------------------------
 
     df = add_rolling_features(
         df,
@@ -234,8 +507,28 @@ def prepare_time_series_features(df):
         windows=ROLLING_WINDOWS,
     )
 
-    # 모델 입력은 FEATURES에 지정된 29개 컬럼만 사용
-    df["sales_log"] = np.log1p(df["sales"])
+
+    # -----------------------------------------------------
+    # Lag 364 추가
+    # -----------------------------------------------------
+
+    df = add_year_lag_feature(
+        df
+    )
+
+
+    # -----------------------------------------------------
+    # Target
+    # -----------------------------------------------------
+
+    df[TARGET_COL] = np.log1p(
+        df["sales"]
+    )
+
+
+    # -----------------------------------------------------
+    # 모델 피처 존재 확인
+    # -----------------------------------------------------
 
     missing_features = [
         feature
@@ -243,197 +536,589 @@ def prepare_time_series_features(df):
         if feature not in df.columns
     ]
 
+
     if missing_features:
+
         raise ValueError(
-            f"생성되지 않은 피처가 있습니다: {missing_features}"
+            f"생성되지 않은 모델 피처가 있습니다: "
+            f"{missing_features}"
         )
 
-    # 초기 기록 부족으로 생기는 결측 위치 확인
+
+    # =====================================================
+    # 초기 결측 QC
+    # =====================================================
+
     group_position = (
-        df.groupby(keys, observed=True)
+
+        df
+        .groupby(
+            keys,
+            observed=True
+        )
         .cumcount()
     )
 
+
     initial_missing_rows = {}
 
+
+    # -----------------------------------------------------
+    # Lag
+    # -----------------------------------------------------
+
     for lag in LAGS:
-        initial_missing_rows[f"sales_lag_{lag}"] = lag
+
+        initial_missing_rows[
+            f"sales_lag_{lag}"
+        ] = lag
+
+
+    # -----------------------------------------------------
+    # Rolling
+    # -----------------------------------------------------
 
     for window in ROLLING_WINDOWS:
+
         feature = (
-            f"sales_rolling_mean_{ROLLING_SHIFT}_{window}"
+            f"sales_rolling_mean_"
+            f"{ROLLING_SHIFT}_"
+            f"{window}"
         )
-        initial_missing_rows[feature] = (
-            ROLLING_SHIFT + window - 1
+
+
+        initial_missing_rows[
+            feature
+        ] = (
+            ROLLING_SHIFT
+            + window
+            - 1
         )
 
-    for feature, initial_rows in initial_missing_rows.items():
 
-        expected_missing = group_position.lt(initial_rows)
-        actual_missing = df[feature].isna()
+    # -----------------------------------------------------
+    # Lag364
+    # -----------------------------------------------------
 
-        if not actual_missing.equals(expected_missing):
+    initial_missing_rows[
+        YEAR_LAG_FEATURE
+    ] = YEAR_LAG
+
+
+    # -----------------------------------------------------
+    # 실제 결측 위치와 예상 결측 위치 비교
+    # -----------------------------------------------------
+
+    for (
+        feature,
+        initial_rows
+    ) in initial_missing_rows.items():
+
+        expected_missing = (
+            group_position.lt(
+                initial_rows
+            )
+        )
+
+
+        actual_missing = (
+            df[
+                feature
+            ].isna()
+        )
+
+
+        if not actual_missing.equals(
+            expected_missing
+        ):
+
             raise ValueError(
-                f"{feature}: 결측 위치가 예상과 다릅니다."
+                f"{feature}: "
+                f"결측 위치가 예상과 다릅니다."
             )
 
-        valid_values = df[feature].dropna().to_numpy()
 
-        if not np.isfinite(valid_values).all():
+        valid_values = (
+            df[
+                feature
+            ]
+            .dropna()
+            .to_numpy()
+        )
+
+
+        if not np.isfinite(
+            valid_values
+        ).all():
+
             raise ValueError(
-                f"{feature}: 무한대 값이 있습니다."
+                f"{feature}에 "
+                f"무한대 값이 있습니다."
             )
 
-    print("\n===== TIME SERIES FEATURES =====")
-    print("Lags:", LAGS)
-    print("Rolling shift:", ROLLING_SHIFT)
-    print("Rolling windows:", ROLLING_WINDOWS)
 
-    print("\nLag 피처:", LAG_FEATURES)
-    print("Rolling mean 피처:", ROLLING_MEAN_FEATURES)
+    # =====================================================
+    # 상태 출력
+    # =====================================================
 
-    print("\n시계열 피처 수:", len(TIME_SERIES_FEATURES))
-    print("전체 입력 피처 수:", len(FEATURES))
-    print("Early stopping rounds:", EARLY_STOPPING_ROUNDS)
+    print(
+        "\n===== TIME SERIES FEATURES ====="
+    )
 
-    print("\n학습 초기 과거 기록 부족으로 발생한 결측치:")
-    print(df[TIME_SERIES_FEATURES].isna().sum())
 
-    print("Lag + Rolling Mean QC: OK")
+    print(
+        "Short Lags:",
+        LAGS
+    )
+
+
+    print(
+        "Year Lag:",
+        YEAR_LAG
+    )
+
+
+    print(
+        "Rolling shift:",
+        ROLLING_SHIFT
+    )
+
+
+    print(
+        "Generated rolling windows:",
+        ROLLING_WINDOWS
+    )
+
+
+    print(
+        "Rolling used:",
+        [7, 28]
+    )
+
+
+    print(
+        "\nLag 피처:",
+        LAG_FEATURES
+    )
+
+
+    print(
+        "Year Lag 피처:",
+        YEAR_LAG_FEATURE
+    )
+
+
+    print(
+        "생성된 Rolling:",
+        ROLLING_MEAN_FEATURES
+    )
+
+
+    print(
+        "모델에 사용하는 Rolling:",
+        SELECTED_ROLLING_MEAN_FEATURES
+    )
+
+
+    print(
+        "\n제외:"
+    )
+
+    print(
+        "- Rolling Mean 14"
+    )
+
+    print(
+        "- EMA 전체"
+    )
+
+
+    print(
+        "\n시계열 모델 입력 피처 수:",
+        len(TIME_SERIES_FEATURES)
+    )
+
+
+    print(
+        "전체 입력 피처 수:",
+        len(FEATURES)
+    )
+
+
+    print(
+        "Early stopping rounds:",
+        EARLY_STOPPING_ROUNDS
+    )
+
+
+    qc_features = (
+        LAG_FEATURES
+        + ROLLING_MEAN_FEATURES
+        + [YEAR_LAG_FEATURE]
+    )
+
+
+    print(
+        "\n초기 과거 데이터 부족 결측치:"
+    )
+
+
+    print(
+        df[
+            qc_features
+        ].isna().sum()
+    )
+
+
+    print(
+        "\nLag + Rolling + Lag364 QC: OK"
+    )
+
 
     return df
 
 
 # =========================================================
-# 5. Fold 데이터 분리
+# 10. Fold 분리
 # =========================================================
 
-def make_fold(df, fold_config):
+def make_fold(
+    df,
+    fold_config
+):
 
-    train_end = pd.Timestamp(fold_config["train_end"])
-    valid_start = pd.Timestamp(fold_config["valid_start"])
-    valid_end = pd.Timestamp(fold_config["valid_end"])
+    train_end = pd.Timestamp(
+        fold_config[
+            "train_end"
+        ]
+    )
 
-    horizon = (valid_end - valid_start).days + 1
+
+    valid_start = pd.Timestamp(
+        fold_config[
+            "valid_start"
+        ]
+    )
+
+
+    valid_end = pd.Timestamp(
+        fold_config[
+            "valid_end"
+        ]
+    )
+
+
+    horizon = (
+        valid_end
+        - valid_start
+    ).days + 1
+
 
     if horizon != FORECAST_HORIZON:
+
         raise ValueError(
-            f"검증 구간은 {FORECAST_HORIZON}일이어야 합니다."
+            f"Validation은 "
+            f"{FORECAST_HORIZON}일이어야 합니다."
         )
 
-    if valid_start != train_end + pd.Timedelta(days=1):
+
+    if (
+        valid_start
+        != train_end
+        + pd.Timedelta(days=1)
+    ):
+
         raise ValueError(
-            "학습 종료일 다음 날부터 검증이 시작되어야 합니다."
+            "Validation은 Train 종료일 "
+            "다음 날부터 시작해야 합니다."
         )
 
-    if min(*LAGS, ROLLING_SHIFT) < horizon:
+
+    # 모든 target 기반 피처는
+    # 16일 예측 구간 이전의 값만 사용
+
+    if min(
+        *LAGS,
+        ROLLING_SHIFT,
+        YEAR_LAG,
+    ) < horizon:
+
         raise ValueError(
-            "일괄 예측 기간보다 짧은 lag 또는 shift가 있습니다."
+            "예측 기간보다 짧은 "
+            "Lag / Shift가 있습니다."
         )
+
 
     train_df = df.loc[
-        df["date"].le(train_end)
+        df["date"].le(
+            train_end
+        )
     ].copy()
+
 
     valid_df = df.loc[
-        df["date"].between(valid_start, valid_end)
+        df["date"].between(
+            valid_start,
+            valid_end
+        )
     ].copy()
 
-    if train_df.empty or valid_df.empty:
+
+    if train_df.empty:
+
         raise ValueError(
-            f"{fold_config['fold']}: 학습 또는 검증 데이터가 없습니다."
+            "Train이 비어 있습니다."
         )
 
-    keys = ["store_nbr", "family"]
+
+    if valid_df.empty:
+
+        raise ValueError(
+            "Validation이 비어 있습니다."
+        )
+
+
+    keys = [
+        "store_nbr",
+        "family",
+    ]
+
 
     train_groups = (
-        train_df.groupby(keys, observed=True)
+        train_df
+        .groupby(
+            keys,
+            observed=True
+        )
         .size()
         .index
     )
 
+
     valid_counts = (
-        valid_df.groupby(keys, observed=True)
+        valid_df
+        .groupby(
+            keys,
+            observed=True
+        )
         .size()
     )
 
-    if (
-        len(train_groups.difference(valid_counts.index)) > 0
-        or len(valid_counts.index.difference(train_groups)) > 0
-    ):
+
+    if len(
+        train_groups.difference(
+            valid_counts.index
+        )
+    ) > 0:
+
         raise ValueError(
-            "학습과 검증의 매장 × 상품군 구성이 다릅니다."
+            "Train에만 존재하는 "
+            "매장 × 상품군이 있습니다."
         )
 
-    if not valid_counts.eq(horizon).all():
+
+    if len(
+        valid_counts.index.difference(
+            train_groups
+        )
+    ) > 0:
+
         raise ValueError(
-            "검증 데이터의 일부 매장 × 상품군이 "
+            "Validation에만 존재하는 "
+            "매장 × 상품군이 있습니다."
+        )
+
+
+    if not valid_counts.eq(
+        horizon
+    ).all():
+
+        raise ValueError(
+            "Validation의 일부 "
+            "매장 × 상품군이 "
             "16일을 채우지 못했습니다."
         )
 
+
     print(
-        f"Train: {train_df['date'].min()} "
-        f"~ {train_df['date'].max()}"
-    )
-    print(
-        f"Valid: {valid_df['date'].min()} "
-        f"~ {valid_df['date'].max()}"
+        f"Train: "
+        f"{train_df['date'].min()} "
+        f"~ "
+        f"{train_df['date'].max()}"
     )
 
-    print("\nTrain shape:", train_df.shape)
-    print("Valid shape:", valid_df.shape)
 
-    return train_df, valid_df
+    print(
+        f"Valid: "
+        f"{valid_df['date'].min()} "
+        f"~ "
+        f"{valid_df['date'].max()}"
+    )
+
+
+    print(
+        "\nTrain shape:",
+        train_df.shape
+    )
+
+
+    print(
+        "Valid shape:",
+        valid_df.shape
+    )
+
+
+    return (
+        train_df,
+        valid_df
+    )
 
 
 # =========================================================
-# 6. 모델 입력 준비
+# 11. 모델 입력 준비
 # =========================================================
 
-def prepare_model_data(train_df, valid_df):
+def prepare_model_data(
+    train_df,
+    valid_df
+):
 
-    X_train = train_df[FEATURES].copy()
-    X_valid = valid_df[FEATURES].copy()
+    X_train = (
+        train_df[
+            FEATURES
+        ].copy()
+    )
+
+
+    X_valid = (
+        valid_df[
+            FEATURES
+        ].copy()
+    )
+
+
+    # -----------------------------------------------------
+    # 범주형 category 통일
+    # -----------------------------------------------------
 
     for feature in CATEGORICAL_FEATURES:
 
         categories = pd.Index(
-            train_df[feature].dropna().unique()
+
+            train_df[
+                feature
+            ]
+            .dropna()
+            .unique()
         )
 
-        X_train[feature] = pd.Categorical(
-            X_train[feature],
+
+        X_train[
+            feature
+        ] = pd.Categorical(
+            X_train[
+                feature
+            ],
             categories=categories,
         )
 
-        X_valid[feature] = pd.Categorical(
-            X_valid[feature],
+
+        X_valid[
+            feature
+        ] = pd.Categorical(
+            X_valid[
+                feature
+            ],
             categories=categories,
         )
 
-    if X_train[BASE_FEATURES].isna().any().any():
+
+    # -----------------------------------------------------
+    # 기본 피처 결측
+    # -----------------------------------------------------
+
+    if X_train[
+        BASE_FEATURES
+    ].isna().any().any():
+
         raise ValueError(
-            "학습 데이터의 기본 피처에 결측치가 있습니다."
+            "Train 기본 피처에 "
+            "결측치가 있습니다."
         )
 
-    if X_valid[BASE_FEATURES].isna().any().any():
+
+    if X_valid[
+        BASE_FEATURES
+    ].isna().any().any():
+
         raise ValueError(
-            "검증 데이터의 기본 피처에 결측치 또는 "
-            "학습에 없던 범주가 있습니다."
+            "Validation 기본 피처에 "
+            "결측치 또는 새로운 범주가 있습니다."
         )
 
-    # 학습 초기 시계열 결측치는 LightGBM이 처리
-    if X_valid[TIME_SERIES_FEATURES].isna().any().any():
-        raise ValueError(
-            "검증 데이터의 시계열 피처에 결측치가 있습니다."
+
+    # -----------------------------------------------------
+    # Validation 시계열 피처 결측
+    # -----------------------------------------------------
+
+    if X_valid[
+        TIME_SERIES_FEATURES
+    ].isna().any().any():
+
+        missing_counts = (
+
+            X_valid[
+                TIME_SERIES_FEATURES
+            ]
+
+            .isna()
+            .sum()
         )
 
-    y_train = train_df["sales_log"].copy()
-    y_valid_log = valid_df["sales_log"].copy()
-    y_valid = valid_df["sales"].copy()
 
-    print("\nX_train:", X_train.shape)
-    print("X_valid:", X_valid.shape)
+        raise ValueError(
+            "Validation 시계열 피처에 "
+            "결측치가 있습니다.\n"
+            f"{missing_counts}"
+        )
+
+
+    # Train 초반의 target-based feature NaN은
+    # LightGBM이 그대로 처리
+
+
+    y_train = (
+        train_df[
+            TARGET_COL
+        ].copy()
+    )
+
+
+    y_valid_log = (
+        valid_df[
+            TARGET_COL
+        ].copy()
+    )
+
+
+    y_valid = (
+        valid_df[
+            "sales"
+        ].copy()
+    )
+
+
+    print(
+        "\nX_train:",
+        X_train.shape
+    )
+
+
+    print(
+        "X_valid:",
+        X_valid.shape
+    )
+
 
     return (
         X_train,
@@ -445,157 +1130,332 @@ def prepare_model_data(train_df, valid_df):
 
 
 # =========================================================
-# 7. 모델 생성 — 기존 파라미터 유지
+# 12. LightGBM
 # =========================================================
 
 def build_model():
 
-    return LGBMRegressor(
+    model = LGBMRegressor(
+
         boosting_type="gbdt",
+
         objective="regression",
+
         learning_rate=0.05,
+
         n_estimators=5000,
+
         num_leaves=31,
+
         max_depth=-1,
+
         min_child_samples=50,
+
         min_split_gain=0.0,
+
         subsample=1.0,
+
         subsample_freq=0,
+
         colsample_bytree=1.0,
+
         reg_alpha=0.0,
+
         reg_lambda=0.0,
+
         metric="rmse",
+
         importance_type="split",
+
         random_state=42,
+
         n_jobs=-1,
+
         verbosity=-1,
     )
 
 
+    return model
+
+
 # =========================================================
-# 8. RMSLE 평가
+# 13. RMSLE
 # =========================================================
 
-def calculate_rmsle(y_true, pred_log):
+def calculate_rmsle(
+    y_true,
+    pred_log
+):
 
-    """
-    log1p(sales) 예측값으로 RMSLE 계산.
+    y_true = np.asarray(
+        y_true,
+        dtype=float
+    )
 
-    음수 로그 예측을 0으로 제한하는 것은
-    원래 판매량 예측을 0 이상으로 제한하는 것과 같음.
-    """
 
-    y_true = np.asarray(y_true, dtype=float)
-    pred_log = np.asarray(pred_log, dtype=float)
+    pred_log = np.asarray(
+        pred_log,
+        dtype=float
+    )
 
-    if not np.isfinite(pred_log).all():
+
+    if not np.isfinite(
+        pred_log
+    ).all():
+
         raise ValueError(
-            "예측값에 NaN 또는 무한대가 있습니다."
+            "예측값에 NaN 또는 "
+            "무한대가 있습니다."
         )
 
-    pred_log = np.maximum(pred_log, 0.0)
 
-    return float(
-        np.sqrt(
-            np.mean(
-                (np.log1p(y_true) - pred_log) ** 2
-            )
+    # sales >= 0이므로
+    # log1p prediction 역시 최소 0으로 제한
+
+    pred_log = np.maximum(
+        pred_log,
+        0.0
+    )
+
+
+    rmsle = np.sqrt(
+
+        np.mean(
+
+            (
+                np.log1p(
+                    y_true
+                )
+                - pred_log
+            ) ** 2
         )
     )
 
 
+    return float(
+        rmsle
+    )
+
+
 # =========================================================
-# 9. 피처 중요도
+# 14. Feature Group
 # =========================================================
 
-def get_feature_group(feature):
+def get_feature_group(
+    feature
+):
+
+    if feature == YEAR_LAG_FEATURE:
+
+        return "Year Lag"
+
 
     if feature in LAG_FEATURES:
+
         return "Lag"
 
-    if feature in ROLLING_MEAN_FEATURES:
+
+    if (
+        feature
+        in SELECTED_ROLLING_MEAN_FEATURES
+    ):
+
         return "Rolling Mean"
+
 
     return "Base"
 
 
-def get_feature_importance(model, fold_name):
+# =========================================================
+# 15. Feature Importance
+# =========================================================
+
+def get_feature_importance(
+    model,
+    fold_name
+):
 
     booster = model.booster_
-    iteration = model.best_iteration_
+
+
+    iteration = (
+        model.best_iteration_
+    )
+
 
     gain = booster.feature_importance(
         importance_type="gain",
         iteration=iteration,
     )
 
+
     split = booster.feature_importance(
         importance_type="split",
         iteration=iteration,
     )
 
+
     importance = pd.DataFrame({
-        "fold": fold_name,
-        "feature": booster.feature_name(),
-        "gain": gain,
-        "split": split,
+
+        "fold":
+            fold_name,
+
+        "feature":
+            booster.feature_name(),
+
+        "gain":
+            gain,
+
+        "split":
+            split,
     })
 
-    importance["group"] = (
-        importance["feature"].map(get_feature_group)
+
+    importance[
+        "group"
+    ] = (
+        importance[
+            "feature"
+        ].map(
+            get_feature_group
+        )
     )
 
-    gain_total = importance["gain"].sum()
-    split_total = importance["split"].sum()
 
-    importance["gain_pct"] = (
-        importance["gain"] / gain_total * 100
+    gain_total = (
+        importance[
+            "gain"
+        ].sum()
+    )
+
+
+    split_total = (
+        importance[
+            "split"
+        ].sum()
+    )
+
+
+    importance[
+        "gain_pct"
+    ] = (
+        importance[
+            "gain"
+        ]
+        / gain_total
+        * 100
         if gain_total > 0
-        else 0.0
+        else 0
     )
 
-    importance["split_pct"] = (
-        importance["split"] / split_total * 100
+
+    importance[
+        "split_pct"
+    ] = (
+        importance[
+            "split"
+        ]
+        / split_total
+        * 100
         if split_total > 0
-        else 0.0
+        else 0
     )
+
 
     return importance
 
 
-def summarize_feature_importance(all_importance):
+# =========================================================
+# 16. 평균 Feature Importance
+# =========================================================
+
+def summarize_feature_importance(
+    all_importance
+):
 
     mean_importance = (
+
         all_importance
+
         .groupby(
-            ["feature", "group"],
+            [
+                "feature",
+                "group",
+            ],
             as_index=False,
         )
+
         .agg(
-            mean_gain_pct=("gain_pct", "mean"),
-            mean_split_pct=("split_pct", "mean"),
-            mean_split=("split", "mean"),
+
+            mean_gain_pct=(
+                "gain_pct",
+                "mean",
+            ),
+
+            mean_split_pct=(
+                "split_pct",
+                "mean",
+            ),
+
+            mean_split=(
+                "split",
+                "mean",
+            ),
         )
     )
 
-    mean_importance["gain_rank"] = (
-        mean_importance["mean_gain_pct"]
-        .rank(method="min", ascending=False)
+
+    mean_importance[
+        "gain_rank"
+    ] = (
+
+        mean_importance[
+            "mean_gain_pct"
+        ]
+
+        .rank(
+            method="min",
+            ascending=False,
+        )
+
         .astype(int)
     )
 
-    mean_importance["split_rank"] = (
-        mean_importance["mean_split"]
-        .rank(method="min", ascending=False)
+
+    mean_importance[
+        "split_rank"
+    ] = (
+
+        mean_importance[
+            "mean_split"
+        ]
+
+        .rank(
+            method="min",
+            ascending=False,
+        )
+
         .astype(int)
     )
+
 
     mean_importance = (
-        mean_importance.sort_values(
-            ["gain_rank", "split_rank", "feature"]
+
+        mean_importance
+
+        .sort_values(
+            [
+                "gain_rank",
+                "split_rank",
+                "feature",
+            ]
         )
-        .reset_index(drop=True)
+
+        .reset_index(
+            drop=True
+        )
     )
+
 
     columns = [
         "feature",
@@ -607,90 +1467,228 @@ def summarize_feature_importance(all_importance):
         "mean_split",
     ]
 
-    mean_importance = mean_importance[columns]
 
-    print("\n" + "=" * 60)
-    print("MEAN FEATURE IMPORTANCE (gain 기준 정렬)")
-    print("=" * 60)
-
-    print(
-        mean_importance.round(2).to_string(index=False)
+    mean_importance = (
+        mean_importance[
+            columns
+        ]
     )
 
-    print("\n" + "=" * 60)
-    print("TIME SERIES FEATURE IMPORTANCE")
-    print("=" * 60)
-
-    time_series_importance = mean_importance.loc[
-        mean_importance["group"].ne("Base"),
-        [
-            "feature",
-            "group",
-            "gain_rank",
-            "mean_gain_pct",
-            "split_rank",
-            "mean_split_pct",
-        ],
-    ]
 
     print(
-        time_series_importance.round(2).to_string(index=False)
+        "\n"
+        + "=" * 70
     )
+
+    print(
+        "MEAN FEATURE IMPORTANCE"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print(
+
+        mean_importance
+        .round(2)
+        .to_string(
+            index=False
+        )
+    )
+
+
+    # -----------------------------------------------------
+    # 시계열 피처만 출력
+    # -----------------------------------------------------
+
+    print(
+        "\n"
+        + "=" * 70
+    )
+
+    print(
+        "TIME SERIES FEATURE IMPORTANCE"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    ts_importance = (
+
+        mean_importance.loc[
+
+            mean_importance[
+                "group"
+            ].ne(
+                "Base"
+            ),
+
+            [
+                "feature",
+                "group",
+                "gain_rank",
+                "mean_gain_pct",
+                "split_rank",
+                "mean_split_pct",
+            ],
+        ]
+    )
+
+
+    print(
+
+        ts_importance
+        .round(2)
+        .to_string(
+            index=False
+        )
+    )
+
+
+    # -----------------------------------------------------
+    # 그룹별 중요도
+    # -----------------------------------------------------
 
     group_importance = (
+
         mean_importance
-        .groupby("group", as_index=False)
-        .agg(
-            n_features=("feature", "size"),
-            gain_pct=("mean_gain_pct", "sum"),
-            split_pct=("mean_split_pct", "sum"),
+
+        .groupby(
+            "group",
+            as_index=False,
         )
-        .sort_values("gain_pct", ascending=False)
-        .reset_index(drop=True)
+
+        .agg(
+
+            n_features=(
+                "feature",
+                "size",
+            ),
+
+            gain_pct=(
+                "mean_gain_pct",
+                "sum",
+            ),
+
+            split_pct=(
+                "mean_split_pct",
+                "sum",
+            ),
+        )
+
+        .sort_values(
+            "gain_pct",
+            ascending=False,
+        )
+
+        .reset_index(
+            drop=True
+        )
     )
 
-    print("\n" + "=" * 60)
-    print("IMPORTANCE BY FEATURE GROUP (%)")
-    print("=" * 60)
 
     print(
-        group_importance.round(2).to_string(index=False)
+        "\n"
+        + "=" * 70
     )
+
+    print(
+        "IMPORTANCE BY FEATURE GROUP (%)"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print(
+
+        group_importance
+        .round(2)
+        .to_string(
+            index=False
+        )
+    )
+
 
     return mean_importance
 
 
 # =========================================================
-# 10. 3개 Fold 백테스트
+# 17. Backtesting
 # =========================================================
 
 def run_backtesting():
 
     validate_configuration()
 
-    # 기존 전처리 파이프라인
+
+    # -----------------------------------------------------
+    # 전처리 + 기본 Feature Engineering
+    # -----------------------------------------------------
+
     train, test, holidays = main()
 
-    del test, holidays
+
+    del test
+    del holidays
+
     gc.collect()
 
-    train = prepare_time_series_features(train)
+
+    # -----------------------------------------------------
+    # Lag + Rolling + Lag364
+    # -----------------------------------------------------
+
+    train = prepare_time_series_features(
+        train
+    )
+
 
     fold_results = []
+
     fold_importances = []
+
+
+    # =====================================================
+    # Fold 반복
+    # =====================================================
 
     for fold_config in FOLDS:
 
-        fold_name = fold_config["fold"]
+        fold_name = (
+            fold_config[
+                "fold"
+            ]
+        )
 
-        print("\n" + "=" * 60)
-        print(f"{fold_name} START")
-        print("=" * 60)
 
-        train_df, valid_df = make_fold(
+        print(
+            "\n"
+            + "=" * 70
+        )
+
+        print(
+            f"{fold_name} START"
+        )
+
+        print(
+            "=" * 70
+        )
+
+
+        (
+            train_df,
+            valid_df
+        ) = make_fold(
             train,
             fold_config,
         )
+
 
         (
             X_train,
@@ -703,165 +1701,473 @@ def run_backtesting():
             valid_df,
         )
 
-        del train_df, valid_df
+
+        del train_df
+        del valid_df
+
         gc.collect()
+
+
+        # -------------------------------------------------
+        # Fold마다 새 모델
+        # -------------------------------------------------
 
         model = build_model()
 
+
         model.fit(
+
             X_train,
             y_train,
+
             eval_set=[
-                (X_valid, y_valid_log),
+                (
+                    X_valid,
+                    y_valid_log
+                )
             ],
+
             eval_metric="rmse",
-            categorical_feature=CATEGORICAL_FEATURES,
+
+            categorical_feature=(
+                CATEGORICAL_FEATURES
+            ),
+
             callbacks=[
+
                 early_stopping(
-                    stopping_rounds=EARLY_STOPPING_ROUNDS,
+                    stopping_rounds=(
+                        EARLY_STOPPING_ROUNDS
+                    ),
                     verbose=True,
                 ),
-                log_evaluation(period=100),
+
+                log_evaluation(
+                    period=100
+                ),
             ],
         )
 
-        best_iteration = int(model.best_iteration_)
+
+        best_iteration = int(
+            model.best_iteration_
+        )
+
 
         pred_log = model.predict(
             X_valid,
-            num_iteration=best_iteration,
+            num_iteration=(
+                best_iteration
+            ),
         )
+
 
         rmsle = calculate_rmsle(
             y_true=y_valid,
             pred_log=pred_log,
         )
 
-        print("\n===== VALIDATION EVALUATION =====")
-        print(f"RMSLE: {rmsle:.6f}")
+
+        baseline_fold = (
+            BASELINE_FOLD_RMSLE[
+                fold_name
+            ]
+        )
+
+
+        delta = (
+            rmsle
+            - baseline_fold
+        )
+
 
         print(
-            f"\n{fold_name} Best Iteration: {best_iteration}"
+            "\n===== VALIDATION EVALUATION ====="
         )
-        print(f"{fold_name} RMSLE: {rmsle:.6f}")
+
+
+        print(
+            f"{fold_name} RMSLE: "
+            f"{rmsle:.6f}"
+        )
+
+
+        print(
+            f"{fold_name} Baseline: "
+            f"{baseline_fold:.6f}"
+        )
+
+
+        print(
+            f"{fold_name} Delta: "
+            f"{delta:+.6f}"
+        )
+
+
+        print(
+            f"{fold_name} "
+            f"Best Iteration: "
+            f"{best_iteration}"
+        )
+
 
         fold_results.append({
-            "fold": fold_name,
-            "train_end": fold_config["train_end"],
-            "valid_start": fold_config["valid_start"],
-            "valid_end": fold_config["valid_end"],
-            "best_iteration": best_iteration,
-            "rmsle": rmsle,
+
+            "fold":
+                fold_name,
+
+            "train_end":
+                fold_config[
+                    "train_end"
+                ],
+
+            "valid_start":
+                fold_config[
+                    "valid_start"
+                ],
+
+            "valid_end":
+                fold_config[
+                    "valid_end"
+                ],
+
+            "baseline_rmsle":
+                baseline_fold,
+
+            "rmsle":
+                rmsle,
+
+            "delta":
+                delta,
+
+            "best_iteration":
+                best_iteration,
         })
 
+
         fold_importances.append(
+
             get_feature_importance(
                 model=model,
                 fold_name=fold_name,
             )
         )
 
-        del (
-            X_train,
-            X_valid,
-            y_train,
-            y_valid_log,
-            y_valid,
-            pred_log,
-            model,
-        )
+
+        del X_train
+        del X_valid
+        del y_train
+        del y_valid_log
+        del y_valid
+        del pred_log
+        del model
+
         gc.collect()
 
-    # -----------------------------------------------------
-    # Fold 결과 요약
-    # -----------------------------------------------------
 
-    results_df = pd.DataFrame(fold_results)
+    # =====================================================
+    # 18. Backtest 결과
+    # =====================================================
 
-    mean_rmsle = results_df["rmsle"].mean()
-    std_rmsle = results_df["rmsle"].std(ddof=1)
+    results_df = pd.DataFrame(
+        fold_results
+    )
 
-    best_fold = results_df.loc[
-        results_df["rmsle"].idxmin(),
-        "fold",
-    ]
 
-    worst_fold = results_df.loc[
-        results_df["rmsle"].idxmax(),
-        "fold",
-    ]
+    mean_rmsle = (
+        results_df[
+            "rmsle"
+        ].mean()
+    )
+
+
+    std_rmsle = (
+        results_df[
+            "rmsle"
+        ].std(
+            ddof=1
+        )
+    )
+
 
     mean_best_iteration = int(
-        round(results_df["best_iteration"].mean())
+        round(
+            results_df[
+                "best_iteration"
+            ].mean()
+        )
     )
+
 
     median_best_iteration = int(
-        results_df["best_iteration"].median()
+        results_df[
+            "best_iteration"
+        ].median()
     )
 
-    print("\n" + "=" * 60)
-    print("BACKTEST RESULTS")
-    print("=" * 60)
+
+    overall_delta = (
+        mean_rmsle
+        - BASELINE_RMSLE
+    )
+
 
     print(
+        "\n"
+        + "=" * 70
+    )
+
+    print(
+        "BACKTEST RESULTS"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print(
+
         results_df.to_string(
+
             index=False,
+
             formatters={
-                "rmsle": lambda value: f"{value:.6f}",
+
+                "baseline_rmsle":
+                    lambda x:
+                    f"{x:.6f}",
+
+                "rmsle":
+                    lambda x:
+                    f"{x:.6f}",
+
+                "delta":
+                    lambda x:
+                    f"{x:+.6f}",
             },
         )
     )
 
-    print(f"\nMean RMSLE : {mean_rmsle:.6f}")
-    print(f"Std RMSLE  : {std_rmsle:.6f}")
-    print(f"Best Fold  : {best_fold}")
-    print(f"Worst Fold : {worst_fold}")
 
     print(
-        f"\nMean Best Iteration: {mean_best_iteration}"
-    )
-    print(
-        f"Median Best Iteration: {median_best_iteration}"
+        f"\nBaseline Mean RMSLE : "
+        f"{BASELINE_RMSLE:.6f}"
     )
 
-    # -----------------------------------------------------
-    # 피처 중요도 요약
-    # -----------------------------------------------------
+
+    print(
+        f"Experiment Mean RMSLE: "
+        f"{mean_rmsle:.6f}"
+    )
+
+
+    print(
+        f"Delta                : "
+        f"{overall_delta:+.6f}"
+    )
+
+
+    print(
+        f"Std RMSLE            : "
+        f"{std_rmsle:.6f}"
+    )
+
+
+    print(
+        f"\nMean Best Iteration  : "
+        f"{mean_best_iteration}"
+    )
+
+
+    print(
+        f"Median Best Iteration: "
+        f"{median_best_iteration}"
+    )
+
+
+    # =====================================================
+    # 19. 실험 판정
+    # =====================================================
+
+    print(
+        "\n"
+        + "=" * 70
+    )
+
+    print(
+        "EXPERIMENT COMPARISON"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print(
+        "Baseline:"
+    )
+
+
+    print(
+        "Lag 16 / 21 / 28 "
+        "+ Rolling Mean 7 / 28"
+    )
+
+
+    print(
+        f"RMSLE = "
+        f"{BASELINE_RMSLE:.6f}"
+    )
+
+
+    print(
+        "\nExperiment:"
+    )
+
+
+    print(
+        "Lag 16 / 21 / 28 "
+        "+ Lag 364 "
+        "+ Rolling Mean 7 / 28"
+    )
+
+
+    print(
+        f"RMSLE = "
+        f"{mean_rmsle:.6f}"
+    )
+
+
+    print(
+        f"\n변화량 = "
+        f"{overall_delta:+.6f}"
+    )
+
+
+    if mean_rmsle < BASELINE_RMSLE:
+
+        print(
+            "\n판정: 개선"
+        )
+
+        print(
+            "→ sales_lag_364 채택 후보"
+        )
+
+
+    elif mean_rmsle > BASELINE_RMSLE:
+
+        print(
+            "\n판정: 악화"
+        )
+
+        print(
+            "→ sales_lag_364 제외"
+        )
+
+
+    else:
+
+        print(
+            "\n판정: 동일"
+        )
+
+
+    # =====================================================
+    # 20. 피처 중요도
+    # =====================================================
 
     all_importance = pd.concat(
         fold_importances,
         ignore_index=True,
     )
 
-    mean_importance = summarize_feature_importance(
-        all_importance
+
+    mean_importance = (
+        summarize_feature_importance(
+            all_importance
+        )
     )
 
-    # -----------------------------------------------------
-    # 최종 상태
-    # -----------------------------------------------------
 
-    print("\n" + "=" * 60)
-    print("BACKTEST STATUS")
-    print("=" * 60)
-
-    print("Folds:", len(FOLDS))
-    print("Features:", len(FEATURES))
-    print("Lags:", LAGS)
+    # =====================================================
+    # 21. 최종 상태
+    # =====================================================
 
     print(
-        "Rolling shift / windows:",
-        ROLLING_SHIFT,
-        ROLLING_WINDOWS,
+        "\n"
+        + "=" * 70
     )
+
+    print(
+        "BACKTEST STATUS"
+    )
+
+    print(
+        "=" * 70
+    )
+
+
+    print(
+        "Experiment:",
+        "Add sales_lag_364"
+    )
+
+
+    print(
+        "Folds:",
+        len(FOLDS)
+    )
+
+
+    print(
+        "Features:",
+        len(FEATURES)
+    )
+
+
+    print(
+        "Short Lags:",
+        LAGS
+    )
+
+
+    print(
+        "Year Lag:",
+        YEAR_LAG
+    )
+
+
+    print(
+        "Rolling Used:",
+        [7, 28]
+    )
+
+
+    print(
+        "EMA:",
+        "Not used"
+    )
+
 
     print(
         "Early stopping rounds:",
-        EARLY_STOPPING_ROUNDS,
+        EARLY_STOPPING_ROUNDS
     )
 
-    print(f"Mean RMSLE: {mean_rmsle:.6f}")
-    print(f"Std RMSLE: {std_rmsle:.6f}")
+
+    print(
+        f"Mean RMSLE: "
+        f"{mean_rmsle:.6f}"
+    )
+
+
+    print(
+        f"Std RMSLE: "
+        f"{std_rmsle:.6f}"
+    )
+
 
     return (
         results_df,
@@ -871,7 +2177,7 @@ def run_backtesting():
 
 
 # =========================================================
-# 11. 실행
+# 22. 실행
 # =========================================================
 
 if __name__ == "__main__":
