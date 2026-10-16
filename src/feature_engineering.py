@@ -5,7 +5,6 @@ import pandas as pd
 # =========================================================
 # 1. 날짜 피처 생성
 # =========================================================
-
 def add_date_features(df):
 
     df = df.copy()
@@ -15,14 +14,34 @@ def add_date_features(df):
     df["year"] = df["date"].dt.year
     df["month"] = df["date"].dt.month
     df["day"] = df["date"].dt.day
+    df["dayofyear"] = df["date"].dt.dayofyear
     df["dayofweek"] = df["date"].dt.dayofweek
 
     df["is_weekend"] = (
         df["dayofweek"] >= 5
     ).astype(int)
 
-    return df
+    # 연간 주기 표현
+    angle = (
+        2
+        * np.pi
+        * df["dayofyear"]
+        / 365.25
+    )
 
+    df["dayofyear_sin"] = np.sin(angle)
+    df["dayofyear_cos"] = np.cos(angle)
+
+    # Payday
+    df["is_15th"] = (
+        df["date"].dt.day == 15
+    ).astype(int)
+
+    df["is_month_end"] = (
+        df["date"].dt.is_month_end
+    ).astype(int)
+
+    return df
 
 # =========================================================
 # 2. 프로모션 피처 생성

@@ -14,19 +14,17 @@ from main import main
 from feature_engineering import (
     LAGS,
     LAG_FEATURES,
-    ROLLING_SHIFT,
-    ROLLING_WINDOWS,
-    ROLLING_MEAN_FEATURES,
     add_lag_features,
-    add_rolling_features,
 )
 
 
 # =========================================================
-# 1. 기본 피처
+# 1. 기존 Base 23개
 # =========================================================
 
 BASE_FEATURES = [
+
+    # Store / Product
     "store_nbr",
     "family",
     "city",
@@ -34,15 +32,18 @@ BASE_FEATURES = [
     "type",
     "cluster",
 
+    # Calendar
     "year",
     "month",
     "day",
     "dayofweek",
     "is_weekend",
 
+    # Promotion
     "onpromotion",
     "is_promotion",
 
+    # Holiday
     "holiday_count",
     "event_christmas",
     "event_new_year",
@@ -56,6 +57,29 @@ BASE_FEATURES = [
 ]
 
 
+# =========================================================
+# 2. 현재 Champion Calendar 피처
+# =========================================================
+
+DAYOFYEAR_FEATURES = [
+    "dayofyear",
+]
+
+
+# =========================================================
+# 3. 이번 실험: Payday
+# =========================================================
+
+PAYDAY_FEATURES = [
+    "is_15th",
+    "is_month_end",
+]
+
+
+# =========================================================
+# 4. 범주형
+# =========================================================
+
 CATEGORICAL_FEATURES = [
     "store_nbr",
     "family",
@@ -67,44 +91,27 @@ CATEGORICAL_FEATURES = [
 
 
 # =========================================================
-# 2. 현재 최고 Rolling 구성
+# 5. 피처 구성
 # =========================================================
 
-# Mean14는 이전 실험에서 제거했을 때 개선되었으므로
-# 모델에서는 Mean7 / Mean28만 사용
-
-SELECTED_ROLLING_MEAN_FEATURES = [
-    "sales_rolling_mean_16_7",
-    "sales_rolling_mean_16_28",
-]
-
-
-# =========================================================
-# 3. 1년 주기 Lag
-# =========================================================
-
-# 364일 = 52주
-# 약 1년 전의 같은 요일 판매량
-
-YEAR_LAG = 364
-
-YEAR_LAG_FEATURE = "sales_lag_364"
-
-
-# =========================================================
-# 4. 모델 입력 피처
-# =========================================================
-
-TIME_SERIES_FEATURES = (
-    LAG_FEATURES
-    + SELECTED_ROLLING_MEAN_FEATURES
-    + [YEAR_LAG_FEATURE]
+# 기존 최고 성능 모델
+# Base23 + Lag3 + dayofyear
+# 23 + 3 + 1 = 27
+BASELINE_FEATURES = (
+    BASE_FEATURES
+    + LAG_FEATURES
+    + DAYOFYEAR_FEATURES
 )
 
 
-FEATURES = (
+# 이번 실험
+# Base23 + Lag3 + dayofyear + Payday2
+# 23 + 3 + 1 + 2 = 29
+PAYDAY_FEATURE_SET = (
     BASE_FEATURES
-    + TIME_SERIES_FEATURES
+    + LAG_FEATURES
+    + DAYOFYEAR_FEATURES
+    + PAYDAY_FEATURES
 )
 
 
@@ -116,21 +123,28 @@ EARLY_STOPPING_ROUNDS = 150
 
 
 # =========================================================
-# 5. 현재 최고 모델 결과
+# 6. 직전 Champion 결과
+#    다시 학습하지 않고 비교용으로만 사용
 # =========================================================
 
-BASELINE_RMSLE = 0.391424
-
-
-BASELINE_FOLD_RMSLE = {
-    "Fold 1": 0.385976,
-    "Fold 2": 0.393941,
-    "Fold 3": 0.394357,
+BASELINE_RESULTS = {
+    "Fold 1": {
+        "best_iteration": 5989,
+        "rmsle": 0.382917,
+    },
+    "Fold 2": {
+        "best_iteration": 3012,
+        "rmsle": 0.405151,
+    },
+    "Fold 3": {
+        "best_iteration": 5509,
+        "rmsle": 0.396157,
+    },
 }
 
 
 # =========================================================
-# 6. Rolling Backtesting Fold
+# 7. Fold
 # =========================================================
 
 FOLDS = [
@@ -156,153 +170,133 @@ FOLDS = [
 
 
 # =========================================================
-# 7. 설정 확인
+# 8. 설정 검증
 # =========================================================
 
 def validate_configuration():
 
-    if tuple(LAGS) != (16, 21, 28):
+    expected_lags = (
+        16,
+        21,
+        28,
+    )
+
+    if tuple(LAGS) != expected_lags:
 
         raise ValueError(
-            "feature_engineering.py의 LAGS는 "
-            "(16, 21, 28)이어야 합니다."
+            f"LAGS는 {expected_lags}이어야 합니다. "
+            f"현재: {tuple(LAGS)}"
         )
 
 
-    if ROLLING_SHIFT != 16:
-
-        raise ValueError(
-            "ROLLING_SHIFT는 16이어야 합니다."
-        )
-
-
-    if tuple(ROLLING_WINDOWS) != (7, 14, 28):
-
-        raise ValueError(
-            "ROLLING_WINDOWS는 "
-            "(7, 14, 28)이어야 합니다."
-        )
-
-
-    expected_generated_rolling = [
-        "sales_rolling_mean_16_7",
-        "sales_rolling_mean_16_14",
-        "sales_rolling_mean_16_28",
-    ]
-
-
-    if (
-        ROLLING_MEAN_FEATURES
-        != expected_generated_rolling
-    ):
-
-        raise ValueError(
-            "생성되는 Rolling Mean 구성이 "
-            "예상과 다릅니다.\n"
-            f"예상: {expected_generated_rolling}\n"
-            f"현재: {ROLLING_MEAN_FEATURES}"
-        )
-
-
-    expected_time_series_features = [
+    expected_lag_features = [
         "sales_lag_16",
         "sales_lag_21",
         "sales_lag_28",
-        "sales_rolling_mean_16_7",
-        "sales_rolling_mean_16_28",
-        "sales_lag_364",
     ]
 
-
-    if (
-        TIME_SERIES_FEATURES
-        != expected_time_series_features
-    ):
+    if list(LAG_FEATURES) != expected_lag_features:
 
         raise ValueError(
-            "이번 실험의 시계열 피처가 "
-            "예상과 다릅니다.\n"
-            f"예상: {expected_time_series_features}\n"
-            f"현재: {TIME_SERIES_FEATURES}"
+            "Lag Feature 구성이 다릅니다.\n"
+            f"예상: {expected_lag_features}\n"
+            f"현재: {list(LAG_FEATURES)}"
         )
 
 
-    # Mean14는 생성만 하고 모델에는 넣지 않음
-    if (
-        "sales_rolling_mean_16_14"
-        in FEATURES
-    ):
+    if len(BASE_FEATURES) != 23:
 
         raise ValueError(
-            "Rolling Mean 14가 모델 입력에 "
-            "포함되어 있습니다."
+            "BASE_FEATURES는 23개여야 합니다. "
+            f"현재: {len(BASE_FEATURES)}"
         )
 
 
-    # EMA는 이번 실험에서 전부 제외
-    ema_features = [
+    if len(BASELINE_FEATURES) != 27:
+
+        raise ValueError(
+            "Champion Baseline은 "
+            "27개 피처여야 합니다. "
+            f"현재: {len(BASELINE_FEATURES)}"
+        )
+
+
+    if len(PAYDAY_FEATURE_SET) != 29:
+
+        raise ValueError(
+            "Payday Experiment는 "
+            "29개 피처여야 합니다. "
+            f"현재: {len(PAYDAY_FEATURE_SET)}"
+        )
+
+
+    if len(
+        PAYDAY_FEATURE_SET
+    ) != len(
+        set(PAYDAY_FEATURE_SET)
+    ):
+
+        raise ValueError(
+            "Payday Feature Set에 "
+            "중복 피처가 있습니다."
+        )
+
+
+    required = {
+        "dayofyear",
+        "is_15th",
+        "is_month_end",
+    }
+
+    if not required.issubset(
+        set(PAYDAY_FEATURE_SET)
+    ):
+
+        raise ValueError(
+            "dayofyear / is_15th / "
+            "is_month_end 중 "
+            "누락된 피처가 있습니다."
+        )
+
+
+    forbidden_keywords = [
+        "rolling",
+        "ema",
+        "seasonal",
+    ]
+
+    forbidden_features = [
+
         feature
-        for feature in FEATURES
-        if "ema" in feature.lower()
+
+        for feature in PAYDAY_FEATURE_SET
+
+        if (
+            any(
+                keyword in feature.lower()
+                for keyword in forbidden_keywords
+            )
+            or feature == "sales_lag_364"
+        )
     ]
 
-
-    if ema_features:
-
-        raise ValueError(
-            "이번 Lag364 실험에는 "
-            "EMA가 들어가면 안 됩니다.\n"
-            f"{ema_features}"
-        )
-
-
-    if len(FEATURES) != len(set(FEATURES)):
+    if forbidden_features:
 
         raise ValueError(
-            "FEATURES에 중복 피처가 있습니다."
-        )
-
-
-    # Base23
-    # + Lag3
-    # + Rolling2
-    # + Lag364 1
-    # = 29
-
-    if len(FEATURES) != 29:
-
-        raise ValueError(
-            f"이번 실험은 총 29개 피처여야 합니다. "
-            f"현재: {len(FEATURES)}개"
+            "이번 실험에는 "
+            "Rolling / EMA / Lag364가 "
+            "들어가면 안 됩니다.\n"
+            f"{forbidden_features}"
         )
 
 
 # =========================================================
-# 8. Lag 364 생성
+# 9. 데이터 준비
 # =========================================================
 
-def add_year_lag_feature(df):
+def prepare_features(df):
 
-    """
-    매장 × 상품군별 sales_lag_364 생성.
-
-    364일 = 52주이므로
-    약 1년 전의 같은 요일 판매량을 가져온다.
-
-    예:
-    2017년 화요일
-    → 364일 전도 화요일
-
-    Validation/Test의 미래 sales는 사용하지 않는다.
-    """
-
-    if YEAR_LAG < FORECAST_HORIZON:
-
-        raise ValueError(
-            "YEAR_LAG는 예측 기간보다 "
-            "짧을 수 없습니다."
-        )
-
+    validate_configuration()
 
     df = df.copy()
 
@@ -311,55 +305,12 @@ def add_year_lag_feature(df):
     )
 
 
-    keys = [
-        "store_nbr",
-        "family",
-    ]
-
-
-    df = (
-        df
-        .sort_values(
-            keys + ["date"]
-        )
-        .reset_index(drop=True)
-    )
-
-
-    df[YEAR_LAG_FEATURE] = (
-
-        df
-        .groupby(
-            keys,
-            observed=True
-        )["sales"]
-
-        .shift(
-            YEAR_LAG
-        )
-    )
-
-
-    return df
-
-
-# =========================================================
-# 9. 시계열 피처 전체 생성
-# =========================================================
-
-def prepare_time_series_features(df):
-
-    validate_configuration()
-
-    df = df.copy()
-
-
     required_columns = [
         "date",
         "sales",
         *BASE_FEATURES,
+        "dayofyear",
     ]
-
 
     missing_columns = [
         column
@@ -367,18 +318,12 @@ def prepare_time_series_features(df):
         if column not in df.columns
     ]
 
-
     if missing_columns:
 
         raise ValueError(
-            f"필수 컬럼이 없습니다: "
+            "필수 컬럼이 없습니다:\n"
             f"{missing_columns}"
         )
-
-
-    df["date"] = pd.to_datetime(
-        df["date"]
-    )
 
 
     keys = [
@@ -388,7 +333,7 @@ def prepare_time_series_features(df):
 
 
     # -----------------------------------------------------
-    # 기본 QC
+    # Key QC
     # -----------------------------------------------------
 
     if df[
@@ -406,10 +351,15 @@ def prepare_time_series_features(df):
     ).any():
 
         raise ValueError(
-            "동일한 store_nbr × family × date가 "
+            "동일한 "
+            "store × family × date가 "
             "중복되어 있습니다."
         )
 
+
+    # -----------------------------------------------------
+    # Sales QC
+    # -----------------------------------------------------
 
     sales_values = (
         df["sales"]
@@ -418,13 +368,13 @@ def prepare_time_series_features(df):
         )
     )
 
-
     if not np.isfinite(
         sales_values
     ).all():
 
         raise ValueError(
-            "sales에 NaN 또는 무한대가 있습니다."
+            "sales에 NaN 또는 "
+            "무한대가 있습니다."
         )
 
 
@@ -438,6 +388,89 @@ def prepare_time_series_features(df):
 
 
     # -----------------------------------------------------
+    # dayofyear QC
+    # -----------------------------------------------------
+
+    expected_dayofyear = (
+        df["date"]
+        .dt.dayofyear
+    )
+
+    if not np.array_equal(
+        df["dayofyear"].to_numpy(),
+        expected_dayofyear.to_numpy(),
+    ):
+
+        raise ValueError(
+            "dayofyear 계산값이 "
+            "date와 일치하지 않습니다."
+        )
+
+
+
+    # -----------------------------------------------------
+    # Payday QC
+    # -----------------------------------------------------
+
+    if not df[
+        "is_15th"
+    ].isin(
+        [0, 1]
+    ).all():
+
+        raise ValueError(
+            "is_15th 값은 "
+            "0 또는 1이어야 합니다."
+        )
+
+
+    if not df[
+        "is_month_end"
+    ].isin(
+        [0, 1]
+    ).all():
+
+        raise ValueError(
+            "is_month_end 값은 "
+            "0 또는 1이어야 합니다."
+        )
+
+
+    expected_15th = (
+        df["date"].dt.day
+        == 15
+    ).astype(int)
+
+
+    if not np.array_equal(
+        df["is_15th"].to_numpy(),
+        expected_15th.to_numpy(),
+    ):
+
+        raise ValueError(
+            "is_15th 계산이 잘못되었습니다."
+        )
+
+
+    expected_month_end = (
+        df["date"]
+        .dt.is_month_end
+        .astype(int)
+    )
+
+
+    if not np.array_equal(
+        df["is_month_end"].to_numpy(),
+        expected_month_end.to_numpy(),
+    ):
+
+        raise ValueError(
+            "is_month_end 계산이 "
+            "잘못되었습니다."
+        )
+
+
+    # -----------------------------------------------------
     # 정렬
     # -----------------------------------------------------
 
@@ -446,23 +479,23 @@ def prepare_time_series_features(df):
         .sort_values(
             keys + ["date"]
         )
-        .reset_index(drop=True)
+        .reset_index(
+            drop=True
+        )
     )
 
 
     # -----------------------------------------------------
     # 날짜 연속성 QC
-    #
-    # Lag는 row 기준이므로
-    # 1 row = 1 day여야 함
     # -----------------------------------------------------
 
     date_diff = (
 
         df
+
         .groupby(
             keys,
-            observed=True
+            observed=True,
         )["date"]
 
         .diff()
@@ -472,7 +505,9 @@ def prepare_time_series_features(df):
     invalid_gap = (
         date_diff.notna()
         & date_diff.ne(
-            pd.Timedelta(days=1)
+            pd.Timedelta(
+                days=1
+            )
         )
     )
 
@@ -480,13 +515,13 @@ def prepare_time_series_features(df):
     if invalid_gap.any():
 
         raise ValueError(
-            "매장 × 상품군 시계열의 날짜가 "
-            "연속적이지 않습니다."
+            "매장 × 상품군 시계열의 "
+            "날짜가 연속적이지 않습니다."
         )
 
 
     # -----------------------------------------------------
-    # Lag 16 / 21 / 28
+    # Lag16 / 21 / 28
     # -----------------------------------------------------
 
     df = add_lag_features(
@@ -496,128 +531,42 @@ def prepare_time_series_features(df):
 
 
     # -----------------------------------------------------
-    # Rolling Mean 7 / 14 / 28 생성
-    #
-    # 모델에서는 Mean7 / Mean28만 사용
-    # -----------------------------------------------------
-
-    df = add_rolling_features(
-        df,
-        shift=ROLLING_SHIFT,
-        windows=ROLLING_WINDOWS,
-    )
-
-
-    # -----------------------------------------------------
-    # Lag 364 추가
-    # -----------------------------------------------------
-
-    df = add_year_lag_feature(
-        df
-    )
-
-
-    # -----------------------------------------------------
     # Target
     # -----------------------------------------------------
 
-    df[TARGET_COL] = np.log1p(
+    df[
+        TARGET_COL
+    ] = np.log1p(
         df["sales"]
     )
 
 
     # -----------------------------------------------------
-    # 모델 피처 존재 확인
+    # Lag QC
     # -----------------------------------------------------
-
-    missing_features = [
-        feature
-        for feature in FEATURES
-        if feature not in df.columns
-    ]
-
-
-    if missing_features:
-
-        raise ValueError(
-            f"생성되지 않은 모델 피처가 있습니다: "
-            f"{missing_features}"
-        )
-
-
-    # =====================================================
-    # 초기 결측 QC
-    # =====================================================
 
     group_position = (
 
         df
+
         .groupby(
             keys,
-            observed=True
+            observed=True,
         )
+
         .cumcount()
     )
 
 
-    initial_missing_rows = {}
-
-
-    # -----------------------------------------------------
-    # Lag
-    # -----------------------------------------------------
-
     for lag in LAGS:
 
-        initial_missing_rows[
-            f"sales_lag_{lag}"
-        ] = lag
-
-
-    # -----------------------------------------------------
-    # Rolling
-    # -----------------------------------------------------
-
-    for window in ROLLING_WINDOWS:
-
         feature = (
-            f"sales_rolling_mean_"
-            f"{ROLLING_SHIFT}_"
-            f"{window}"
+            f"sales_lag_{lag}"
         )
 
-
-        initial_missing_rows[
-            feature
-        ] = (
-            ROLLING_SHIFT
-            + window
-            - 1
-        )
-
-
-    # -----------------------------------------------------
-    # Lag364
-    # -----------------------------------------------------
-
-    initial_missing_rows[
-        YEAR_LAG_FEATURE
-    ] = YEAR_LAG
-
-
-    # -----------------------------------------------------
-    # 실제 결측 위치와 예상 결측 위치 비교
-    # -----------------------------------------------------
-
-    for (
-        feature,
-        initial_rows
-    ) in initial_missing_rows.items():
 
         expected_missing = (
-            group_position.lt(
-                initial_rows
-            )
+            group_position < lag
         )
 
 
@@ -633,145 +582,95 @@ def prepare_time_series_features(df):
         ):
 
             raise ValueError(
-                f"{feature}: "
-                f"결측 위치가 예상과 다릅니다."
+                f"{feature}의 "
+                "결측 위치가 예상과 다릅니다."
             )
 
 
-        valid_values = (
-            df[
-                feature
-            ]
-            .dropna()
-            .to_numpy()
-        )
-
-
-        if not np.isfinite(
-            valid_values
-        ).all():
-
-            raise ValueError(
-                f"{feature}에 "
-                f"무한대 값이 있습니다."
-            )
-
-
-    # =====================================================
-    # 상태 출력
-    # =====================================================
+    # -----------------------------------------------------
+    # 출력
+    # -----------------------------------------------------
 
     print(
-        "\n===== TIME SERIES FEATURES ====="
+        "\n"
+        + "=" * 75
+    )
+
+    print(
+        "PAYDAY FEATURE EXPERIMENT"
+    )
+
+    print(
+        "=" * 75
     )
 
 
     print(
-        "Short Lags:",
-        LAGS
+        "\nStored Champion Baseline:"
+    )
+
+    print(
+        "Base23 + Lag16/21/28 "
+        "+ dayofyear"
+    )
+
+    print(
+        "Feature count:",
+        len(BASELINE_FEATURES)
+    )
+
+    print(
+        "Baseline is NOT retrained."
     )
 
 
     print(
-        "Year Lag:",
-        YEAR_LAG
+        "\nExperiment:"
+    )
+
+    print(
+        "Base23 + Lag16/21/28 "
+        "+ dayofyear "
+        "+ is_15th "
+        "+ is_month_end"
+    )
+
+    print(
+        "Feature count:",
+        len(PAYDAY_FEATURE_SET)
     )
 
 
     print(
-        "Rolling shift:",
-        ROLLING_SHIFT
-    )
-
-
-    print(
-        "Generated rolling windows:",
-        ROLLING_WINDOWS
-    )
-
-
-    print(
-        "Rolling used:",
-        [7, 28]
-    )
-
-
-    print(
-        "\nLag 피처:",
-        LAG_FEATURES
-    )
-
-
-    print(
-        "Year Lag 피처:",
-        YEAR_LAG_FEATURE
-    )
-
-
-    print(
-        "생성된 Rolling:",
-        ROLLING_MEAN_FEATURES
-    )
-
-
-    print(
-        "모델에 사용하는 Rolling:",
-        SELECTED_ROLLING_MEAN_FEATURES
-    )
-
-
-    print(
-        "\n제외:"
-    )
-
-    print(
-        "- Rolling Mean 14"
-    )
-
-    print(
-        "- EMA 전체"
-    )
-
-
-    print(
-        "\n시계열 모델 입력 피처 수:",
-        len(TIME_SERIES_FEATURES)
-    )
-
-
-    print(
-        "전체 입력 피처 수:",
-        len(FEATURES)
-    )
-
-
-    print(
-        "Early stopping rounds:",
+        "\nEarly stopping:",
         EARLY_STOPPING_ROUNDS
     )
 
 
-    qc_features = (
-        LAG_FEATURES
-        + ROLLING_MEAN_FEATURES
-        + [YEAR_LAG_FEATURE]
-    )
-
-
     print(
-        "\n초기 과거 데이터 부족 결측치:"
+        "\nLag missing:"
     )
-
 
     print(
         df[
-            qc_features
+            LAG_FEATURES
         ].isna().sum()
     )
 
 
     print(
-        "\nLag + Rolling + Lag364 QC: OK"
+        "\nPayday counts:"
+    )
+
+    print(
+        df[
+            PAYDAY_FEATURES
+        ].sum()
+    )
+
+
+    print(
+        "\nQC: OK"
     )
 
 
@@ -784,7 +683,7 @@ def prepare_time_series_features(df):
 
 def make_fold(
     df,
-    fold_config
+    fold_config,
 ):
 
     train_end = pd.Timestamp(
@@ -793,13 +692,11 @@ def make_fold(
         ]
     )
 
-
     valid_start = pd.Timestamp(
         fold_config[
             "valid_start"
         ]
     )
-
 
     valid_end = pd.Timestamp(
         fold_config[
@@ -817,15 +714,17 @@ def make_fold(
     if horizon != FORECAST_HORIZON:
 
         raise ValueError(
-            f"Validation은 "
-            f"{FORECAST_HORIZON}일이어야 합니다."
+            "Validation 기간은 "
+            "16일이어야 합니다."
         )
 
 
     if (
         valid_start
         != train_end
-        + pd.Timedelta(days=1)
+        + pd.Timedelta(
+            days=1
+        )
     ):
 
         raise ValueError(
@@ -834,18 +733,11 @@ def make_fold(
         )
 
 
-    # 모든 target 기반 피처는
-    # 16일 예측 구간 이전의 값만 사용
-
-    if min(
-        *LAGS,
-        ROLLING_SHIFT,
-        YEAR_LAG,
-    ) < horizon:
+    if min(LAGS) < horizon:
 
         raise ValueError(
             "예측 기간보다 짧은 "
-            "Lag / Shift가 있습니다."
+            "Lag가 있습니다."
         )
 
 
@@ -859,7 +751,7 @@ def make_fold(
     valid_df = df.loc[
         df["date"].between(
             valid_start,
-            valid_end
+            valid_end,
         )
     ].copy()
 
@@ -884,49 +776,17 @@ def make_fold(
     ]
 
 
-    train_groups = (
-        train_df
-        .groupby(
-            keys,
-            observed=True
-        )
-        .size()
-        .index
-    )
-
-
     valid_counts = (
+
         valid_df
+
         .groupby(
             keys,
-            observed=True
+            observed=True,
         )
+
         .size()
     )
-
-
-    if len(
-        train_groups.difference(
-            valid_counts.index
-        )
-    ) > 0:
-
-        raise ValueError(
-            "Train에만 존재하는 "
-            "매장 × 상품군이 있습니다."
-        )
-
-
-    if len(
-        valid_counts.index.difference(
-            train_groups
-        )
-    ) > 0:
-
-        raise ValueError(
-            "Validation에만 존재하는 "
-            "매장 × 상품군이 있습니다."
-        )
 
 
     if not valid_counts.eq(
@@ -934,33 +794,29 @@ def make_fold(
     ).all():
 
         raise ValueError(
-            "Validation의 일부 "
-            "매장 × 상품군이 "
+            "일부 Validation 그룹이 "
             "16일을 채우지 못했습니다."
         )
 
 
     print(
-        f"Train: "
-        f"{train_df['date'].min()} "
-        f"~ "
-        f"{train_df['date'].max()}"
+        "\nTrain:",
+        train_df["date"].min(),
+        "~",
+        train_df["date"].max(),
     )
 
-
     print(
-        f"Valid: "
-        f"{valid_df['date'].min()} "
-        f"~ "
-        f"{valid_df['date'].max()}"
+        "Valid:",
+        valid_df["date"].min(),
+        "~",
+        valid_df["date"].max(),
     )
 
-
     print(
-        "\nTrain shape:",
+        "Train shape:",
         train_df.shape
     )
-
 
     print(
         "Valid shape:",
@@ -970,7 +826,7 @@ def make_fold(
 
     return (
         train_df,
-        valid_df
+        valid_df,
     )
 
 
@@ -980,25 +836,24 @@ def make_fold(
 
 def prepare_model_data(
     train_df,
-    valid_df
+    valid_df,
 ):
 
     X_train = (
         train_df[
-            FEATURES
+            PAYDAY_FEATURE_SET
         ].copy()
     )
 
-
     X_valid = (
         valid_df[
-            FEATURES
+            PAYDAY_FEATURE_SET
         ].copy()
     )
 
 
     # -----------------------------------------------------
-    # 범주형 category 통일
+    # Category 정렬
     # -----------------------------------------------------
 
     for feature in CATEGORICAL_FEATURES:
@@ -1008,7 +863,9 @@ def prepare_model_data(
             train_df[
                 feature
             ]
+
             .dropna()
+
             .unique()
         )
 
@@ -1034,57 +891,74 @@ def prepare_model_data(
 
 
     # -----------------------------------------------------
-    # 기본 피처 결측
+    # Lag 외 피처 결측 확인
     # -----------------------------------------------------
 
-    if X_train[
-        BASE_FEATURES
-    ].isna().any().any():
+    non_lag_features = [
+        feature
+        for feature in PAYDAY_FEATURE_SET
+        if feature not in LAG_FEATURES
+    ]
+
+
+    if (
+        X_train[
+            non_lag_features
+        ]
+        .isna()
+        .any()
+        .any()
+    ):
 
         raise ValueError(
-            "Train 기본 피처에 "
+            "Train의 Lag 외 피처에 "
             "결측치가 있습니다."
         )
 
 
-    if X_valid[
-        BASE_FEATURES
-    ].isna().any().any():
+    if (
+        X_valid[
+            non_lag_features
+        ]
+        .isna()
+        .any()
+        .any()
+    ):
 
         raise ValueError(
-            "Validation 기본 피처에 "
-            "결측치 또는 새로운 범주가 있습니다."
+            "Validation의 Lag 외 피처에 "
+            "결측치가 있습니다."
         )
 
 
-    # -----------------------------------------------------
-    # Validation 시계열 피처 결측
-    # -----------------------------------------------------
-
-    if X_valid[
-        TIME_SERIES_FEATURES
-    ].isna().any().any():
+    # Validation은 충분한 과거가 있으므로
+    # Lag 결측이 없어야 함
+    if (
+        X_valid[
+            LAG_FEATURES
+        ]
+        .isna()
+        .any()
+        .any()
+    ):
 
         missing_counts = (
 
             X_valid[
-                TIME_SERIES_FEATURES
+                LAG_FEATURES
             ]
 
             .isna()
+
             .sum()
         )
 
 
         raise ValueError(
-            "Validation 시계열 피처에 "
+            "Validation Lag에 "
             "결측치가 있습니다.\n"
             f"{missing_counts}"
         )
-
-
-    # Train 초반의 target-based feature NaN은
-    # LightGBM이 그대로 처리
 
 
     y_train = (
@@ -1108,18 +982,6 @@ def prepare_model_data(
     )
 
 
-    print(
-        "\nX_train:",
-        X_train.shape
-    )
-
-
-    print(
-        "X_valid:",
-        X_valid.shape
-    )
-
-
     return (
         X_train,
         X_valid,
@@ -1135,7 +997,7 @@ def prepare_model_data(
 
 def build_model():
 
-    model = LGBMRegressor(
+    return LGBMRegressor(
 
         boosting_type="gbdt",
 
@@ -1143,7 +1005,7 @@ def build_model():
 
         learning_rate=0.05,
 
-        n_estimators=5000,
+        n_estimators=6500,
 
         num_leaves=31,
 
@@ -1175,27 +1037,23 @@ def build_model():
     )
 
 
-    return model
-
-
 # =========================================================
 # 13. RMSLE
 # =========================================================
 
 def calculate_rmsle(
     y_true,
-    pred_log
+    pred_log,
 ):
 
     y_true = np.asarray(
         y_true,
-        dtype=float
+        dtype=float,
     )
-
 
     pred_log = np.asarray(
         pred_log,
-        dtype=float
+        dtype=float,
     )
 
 
@@ -1209,116 +1067,64 @@ def calculate_rmsle(
         )
 
 
-    # sales >= 0이므로
-    # log1p prediction 역시 최소 0으로 제한
-
     pred_log = np.maximum(
         pred_log,
-        0.0
-    )
-
-
-    rmsle = np.sqrt(
-
-        np.mean(
-
-            (
-                np.log1p(
-                    y_true
-                )
-                - pred_log
-            ) ** 2
-        )
+        0.0,
     )
 
 
     return float(
-        rmsle
+
+        np.sqrt(
+
+            np.mean(
+
+                (
+                    np.log1p(
+                        y_true
+                    )
+                    - pred_log
+                )
+                ** 2
+            )
+        )
     )
 
 
 # =========================================================
-# 14. Feature Group
-# =========================================================
-
-def get_feature_group(
-    feature
-):
-
-    if feature == YEAR_LAG_FEATURE:
-
-        return "Year Lag"
-
-
-    if feature in LAG_FEATURES:
-
-        return "Lag"
-
-
-    if (
-        feature
-        in SELECTED_ROLLING_MEAN_FEATURES
-    ):
-
-        return "Rolling Mean"
-
-
-    return "Base"
-
-
-# =========================================================
-# 15. Feature Importance
+# 14. Feature Importance
 # =========================================================
 
 def get_feature_importance(
     model,
-    fold_name
+    fold_name,
 ):
 
     booster = model.booster_
 
-
-    iteration = (
+    best_iteration = int(
         model.best_iteration_
     )
 
 
     gain = booster.feature_importance(
         importance_type="gain",
-        iteration=iteration,
+        iteration=best_iteration,
     )
-
 
     split = booster.feature_importance(
         importance_type="split",
-        iteration=iteration,
+        iteration=best_iteration,
     )
 
 
-    importance = pd.DataFrame({
-
-        "fold":
-            fold_name,
-
-        "feature":
-            booster.feature_name(),
-
-        "gain":
-            gain,
-
-        "split":
-            split,
-    })
-
-
-    importance[
-        "group"
-    ] = (
-        importance[
-            "feature"
-        ].map(
-            get_feature_group
-        )
+    importance = pd.DataFrame(
+        {
+            "fold": fold_name,
+            "feature": booster.feature_name(),
+            "gain": gain,
+            "split": split,
+        }
     )
 
 
@@ -1327,7 +1133,6 @@ def get_feature_importance(
             "gain"
         ].sum()
     )
-
 
     split_total = (
         importance[
@@ -1339,26 +1144,18 @@ def get_feature_importance(
     importance[
         "gain_pct"
     ] = (
-        importance[
-            "gain"
-        ]
+        importance["gain"]
         / gain_total
         * 100
-        if gain_total > 0
-        else 0
     )
 
 
     importance[
         "split_pct"
     ] = (
-        importance[
-            "split"
-        ]
+        importance["split"]
         / split_total
         * 100
-        if split_total > 0
-        else 0
     )
 
 
@@ -1366,260 +1163,131 @@ def get_feature_importance(
 
 
 # =========================================================
-# 16. 평균 Feature Importance
+# 15. Payday 모델 하나 학습
 # =========================================================
 
-def summarize_feature_importance(
-    all_importance
+def train_payday_model(
+    train_df,
+    valid_df,
 ):
 
-    mean_importance = (
-
-        all_importance
-
-        .groupby(
-            [
-                "feature",
-                "group",
-            ],
-            as_index=False,
-        )
-
-        .agg(
-
-            mean_gain_pct=(
-                "gain_pct",
-                "mean",
-            ),
-
-            mean_split_pct=(
-                "split_pct",
-                "mean",
-            ),
-
-            mean_split=(
-                "split",
-                "mean",
-            ),
-        )
-    )
-
-
-    mean_importance[
-        "gain_rank"
-    ] = (
-
-        mean_importance[
-            "mean_gain_pct"
-        ]
-
-        .rank(
-            method="min",
-            ascending=False,
-        )
-
-        .astype(int)
-    )
-
-
-    mean_importance[
-        "split_rank"
-    ] = (
-
-        mean_importance[
-            "mean_split"
-        ]
-
-        .rank(
-            method="min",
-            ascending=False,
-        )
-
-        .astype(int)
-    )
-
-
-    mean_importance = (
-
-        mean_importance
-
-        .sort_values(
-            [
-                "gain_rank",
-                "split_rank",
-                "feature",
-            ]
-        )
-
-        .reset_index(
-            drop=True
-        )
-    )
-
-
-    columns = [
-        "feature",
-        "group",
-        "gain_rank",
-        "mean_gain_pct",
-        "split_rank",
-        "mean_split_pct",
-        "mean_split",
-    ]
-
-
-    mean_importance = (
-        mean_importance[
-            columns
-        ]
+    (
+        X_train,
+        X_valid,
+        y_train,
+        y_valid_log,
+        y_valid,
+    ) = prepare_model_data(
+        train_df,
+        valid_df,
     )
 
 
     print(
         "\n"
-        + "=" * 70
+        + "-" * 75
     )
 
     print(
-        "MEAN FEATURE IMPORTANCE"
+        "PAYDAY EXPERIMENT | "
+        "Lag3 + dayofyear "
+        "+ is_15th + is_month_end"
     )
 
     print(
-        "=" * 70
-    )
-
-
-    print(
-
-        mean_importance
-        .round(2)
-        .to_string(
-            index=False
-        )
-    )
-
-
-    # -----------------------------------------------------
-    # 시계열 피처만 출력
-    # -----------------------------------------------------
-
-    print(
-        "\n"
-        + "=" * 70
+        "-" * 75
     )
 
     print(
-        "TIME SERIES FEATURE IMPORTANCE"
-    )
-
-    print(
-        "=" * 70
+        "Feature count:",
+        len(PAYDAY_FEATURE_SET)
     )
 
 
-    ts_importance = (
+    model = build_model()
 
-        mean_importance.loc[
 
-            mean_importance[
-                "group"
-            ].ne(
-                "Base"
+    model.fit(
+
+        X_train,
+        y_train,
+
+        eval_set=[
+            (
+                X_valid,
+                y_valid_log,
+            )
+        ],
+
+        eval_metric="rmse",
+
+        categorical_feature=(
+            CATEGORICAL_FEATURES
+        ),
+
+        callbacks=[
+
+            early_stopping(
+                stopping_rounds=(
+                    EARLY_STOPPING_ROUNDS
+                ),
+                verbose=True,
             ),
 
-            [
-                "feature",
-                "group",
-                "gain_rank",
-                "mean_gain_pct",
-                "split_rank",
-                "mean_split_pct",
-            ],
-        ]
-    )
-
-
-    print(
-
-        ts_importance
-        .round(2)
-        .to_string(
-            index=False
-        )
-    )
-
-
-    # -----------------------------------------------------
-    # 그룹별 중요도
-    # -----------------------------------------------------
-
-    group_importance = (
-
-        mean_importance
-
-        .groupby(
-            "group",
-            as_index=False,
-        )
-
-        .agg(
-
-            n_features=(
-                "feature",
-                "size",
+            log_evaluation(
+                period=100
             ),
+        ],
+    )
 
-            gain_pct=(
-                "mean_gain_pct",
-                "sum",
-            ),
 
-            split_pct=(
-                "mean_split_pct",
-                "sum",
-            ),
-        )
+    best_iteration = int(
+        model.best_iteration_
+    )
 
-        .sort_values(
-            "gain_pct",
-            ascending=False,
-        )
 
-        .reset_index(
-            drop=True
-        )
+    pred_log = model.predict(
+        X_valid,
+        num_iteration=best_iteration,
+    )
+
+
+    rmsle = calculate_rmsle(
+        y_true=y_valid,
+        pred_log=pred_log,
     )
 
 
     print(
-        "\n"
-        + "=" * 70
+        f"Best iteration: "
+        f"{best_iteration}"
     )
 
     print(
-        "IMPORTANCE BY FEATURE GROUP (%)"
-    )
-
-    print(
-        "=" * 70
+        f"RMSLE: "
+        f"{rmsle:.6f}"
     )
 
 
-    print(
+    del X_train
+    del X_valid
+    del y_train
+    del y_valid_log
+    del y_valid
+    del pred_log
 
-        group_importance
-        .round(2)
-        .to_string(
-            index=False
-        )
+    gc.collect()
+
+
+    return (
+        model,
+        best_iteration,
+        rmsle,
     )
-
-
-    return mean_importance
 
 
 # =========================================================
-# 17. Backtesting
+# 16. 3-Fold Payday Backtesting
 # =========================================================
 
 def run_backtesting():
@@ -1628,11 +1296,10 @@ def run_backtesting():
 
 
     # -----------------------------------------------------
-    # 전처리 + 기본 Feature Engineering
+    # 기존 Pipeline
     # -----------------------------------------------------
 
     train, test, holidays = main()
-
 
     del test
     del holidays
@@ -1641,10 +1308,10 @@ def run_backtesting():
 
 
     # -----------------------------------------------------
-    # Lag + Rolling + Lag364
+    # Payday + Lag 생성
     # -----------------------------------------------------
 
-    train = prepare_time_series_features(
+    train = prepare_features(
         train
     )
 
@@ -1668,8 +1335,8 @@ def run_backtesting():
 
 
         print(
-            "\n"
-            + "=" * 70
+            "\n\n"
+            + "=" * 75
         )
 
         print(
@@ -1677,196 +1344,152 @@ def run_backtesting():
         )
 
         print(
-            "=" * 70
+            "=" * 75
         )
 
 
         (
             train_df,
-            valid_df
+            valid_df,
         ) = make_fold(
             train,
             fold_config,
         )
 
 
+        # -------------------------------------------------
+        # 기존 Champion 결과 불러오기
+        # -------------------------------------------------
+
+        baseline_iteration = (
+            BASELINE_RESULTS[
+                fold_name
+            ][
+                "best_iteration"
+            ]
+        )
+
+        baseline_rmsle = (
+            BASELINE_RESULTS[
+                fold_name
+            ][
+                "rmsle"
+            ]
+        )
+
+
+        print(
+            "\nStored Champion Baseline"
+        )
+
+        print(
+            "Base23 + Lag3 + dayofyear"
+        )
+
+        print(
+            f"Best iteration: "
+            f"{baseline_iteration}"
+        )
+
+        print(
+            f"RMSLE: "
+            f"{baseline_rmsle:.6f}"
+        )
+
+        print(
+            "Baseline retraining: SKIPPED"
+        )
+
+
+        # -------------------------------------------------
+        # Payday 모델만 학습
+        # -------------------------------------------------
+
         (
-            X_train,
-            X_valid,
-            y_train,
-            y_valid_log,
-            y_valid,
-        ) = prepare_model_data(
+            payday_model,
+            payday_iteration,
+            payday_rmsle,
+        ) = train_payday_model(
             train_df,
             valid_df,
         )
 
 
+        fold_importances.append(
+            get_feature_importance(
+                payday_model,
+                fold_name,
+            )
+        )
+
+
+        delta = (
+            payday_rmsle
+            - baseline_rmsle
+        )
+
+
+        print(
+            "\n"
+            + "=" * 75
+        )
+
+        print(
+            f"{fold_name} COMPARISON"
+        )
+
+        print(
+            "=" * 75
+        )
+
+        print(
+            f"Champion baseline : "
+            f"{baseline_rmsle:.6f}"
+        )
+
+        print(
+            f"Payday experiment : "
+            f"{payday_rmsle:.6f}"
+        )
+
+        print(
+            f"Delta             : "
+            f"{delta:+.6f}"
+        )
+
+
+        fold_results.append(
+            {
+                "fold":
+                    fold_name,
+
+                "baseline_best_iteration":
+                    baseline_iteration,
+
+                "baseline_rmsle":
+                    baseline_rmsle,
+
+                "payday_best_iteration":
+                    payday_iteration,
+
+                "payday_rmsle":
+                    payday_rmsle,
+
+                "delta_vs_baseline":
+                    delta,
+            }
+        )
+
+
+        del payday_model
         del train_df
         del valid_df
 
         gc.collect()
 
 
-        # -------------------------------------------------
-        # Fold마다 새 모델
-        # -------------------------------------------------
-
-        model = build_model()
-
-
-        model.fit(
-
-            X_train,
-            y_train,
-
-            eval_set=[
-                (
-                    X_valid,
-                    y_valid_log
-                )
-            ],
-
-            eval_metric="rmse",
-
-            categorical_feature=(
-                CATEGORICAL_FEATURES
-            ),
-
-            callbacks=[
-
-                early_stopping(
-                    stopping_rounds=(
-                        EARLY_STOPPING_ROUNDS
-                    ),
-                    verbose=True,
-                ),
-
-                log_evaluation(
-                    period=100
-                ),
-            ],
-        )
-
-
-        best_iteration = int(
-            model.best_iteration_
-        )
-
-
-        pred_log = model.predict(
-            X_valid,
-            num_iteration=(
-                best_iteration
-            ),
-        )
-
-
-        rmsle = calculate_rmsle(
-            y_true=y_valid,
-            pred_log=pred_log,
-        )
-
-
-        baseline_fold = (
-            BASELINE_FOLD_RMSLE[
-                fold_name
-            ]
-        )
-
-
-        delta = (
-            rmsle
-            - baseline_fold
-        )
-
-
-        print(
-            "\n===== VALIDATION EVALUATION ====="
-        )
-
-
-        print(
-            f"{fold_name} RMSLE: "
-            f"{rmsle:.6f}"
-        )
-
-
-        print(
-            f"{fold_name} Baseline: "
-            f"{baseline_fold:.6f}"
-        )
-
-
-        print(
-            f"{fold_name} Delta: "
-            f"{delta:+.6f}"
-        )
-
-
-        print(
-            f"{fold_name} "
-            f"Best Iteration: "
-            f"{best_iteration}"
-        )
-
-
-        fold_results.append({
-
-            "fold":
-                fold_name,
-
-            "train_end":
-                fold_config[
-                    "train_end"
-                ],
-
-            "valid_start":
-                fold_config[
-                    "valid_start"
-                ],
-
-            "valid_end":
-                fold_config[
-                    "valid_end"
-                ],
-
-            "baseline_rmsle":
-                baseline_fold,
-
-            "rmsle":
-                rmsle,
-
-            "delta":
-                delta,
-
-            "best_iteration":
-                best_iteration,
-        })
-
-
-        fold_importances.append(
-
-            get_feature_importance(
-                model=model,
-                fold_name=fold_name,
-            )
-        )
-
-
-        del X_train
-        del X_valid
-        del y_train
-        del y_valid_log
-        del y_valid
-        del pred_log
-        del model
-
-        gc.collect()
-
-
     # =====================================================
-    # 18. Backtest 결과
+    # 결과
     # =====================================================
 
     results_df = pd.DataFrame(
@@ -1874,55 +1497,70 @@ def run_backtesting():
     )
 
 
-    mean_rmsle = (
+    baseline_mean = (
         results_df[
-            "rmsle"
+            "baseline_rmsle"
+        ].mean()
+    )
+
+    payday_mean = (
+        results_df[
+            "payday_rmsle"
         ].mean()
     )
 
 
-    std_rmsle = (
+    baseline_std = (
         results_df[
-            "rmsle"
+            "baseline_rmsle"
+        ].std(
+            ddof=1
+        )
+    )
+
+    payday_std = (
+        results_df[
+            "payday_rmsle"
         ].std(
             ddof=1
         )
     )
 
 
-    mean_best_iteration = int(
-        round(
+    mean_delta = (
+        payday_mean
+        - baseline_mean
+    )
+
+
+    improved_folds = int(
+        (
             results_df[
-                "best_iteration"
-            ].mean()
-        )
+                "payday_rmsle"
+            ]
+            <
+            results_df[
+                "baseline_rmsle"
+            ]
+        ).sum()
     )
 
 
-    median_best_iteration = int(
-        results_df[
-            "best_iteration"
-        ].median()
-    )
-
-
-    overall_delta = (
-        mean_rmsle
-        - BASELINE_RMSLE
-    )
-
+    # -----------------------------------------------------
+    # Fold 결과 출력
+    # -----------------------------------------------------
 
     print(
-        "\n"
-        + "=" * 70
+        "\n\n"
+        + "=" * 90
     )
 
     print(
-        "BACKTEST RESULTS"
+        "PAYDAY BACKTEST RESULTS"
     )
 
     print(
-        "=" * 70
+        "=" * 90
     )
 
 
@@ -1938,7 +1576,92 @@ def run_backtesting():
                     lambda x:
                     f"{x:.6f}",
 
-                "rmsle":
+                "payday_rmsle":
+                    lambda x:
+                    f"{x:.6f}",
+
+                "delta_vs_baseline":
+                    lambda x:
+                    f"{x:+.6f}",
+            },
+        )
+    )
+
+
+    # -----------------------------------------------------
+    # 평균 결과
+    # -----------------------------------------------------
+
+    summary_df = pd.DataFrame(
+        [
+            {
+                "model":
+                    "Champion baseline",
+
+                "features":
+                    len(
+                        BASELINE_FEATURES
+                    ),
+
+                "mean_rmsle":
+                    baseline_mean,
+
+                "std_rmsle":
+                    baseline_std,
+
+                "delta":
+                    0.0,
+            },
+
+            {
+                "model":
+                    "Payday",
+
+                "features":
+                    len(
+                        PAYDAY_FEATURE_SET
+                    ),
+
+                "mean_rmsle":
+                    payday_mean,
+
+                "std_rmsle":
+                    payday_std,
+
+                "delta":
+                    mean_delta,
+            },
+        ]
+    )
+
+
+    print(
+        "\n"
+        + "=" * 90
+    )
+
+    print(
+        "MEAN RMSLE COMPARISON"
+    )
+
+    print(
+        "=" * 90
+    )
+
+
+    print(
+
+        summary_df.to_string(
+
+            index=False,
+
+            formatters={
+
+                "mean_rmsle":
+                    lambda x:
+                    f"{x:.6f}",
+
+                "std_rmsle":
                     lambda x:
                     f"{x:.6f}",
 
@@ -1951,131 +1674,13 @@ def run_backtesting():
 
 
     print(
-        f"\nBaseline Mean RMSLE : "
-        f"{BASELINE_RMSLE:.6f}"
-    )
-
-
-    print(
-        f"Experiment Mean RMSLE: "
-        f"{mean_rmsle:.6f}"
-    )
-
-
-    print(
-        f"Delta                : "
-        f"{overall_delta:+.6f}"
-    )
-
-
-    print(
-        f"Std RMSLE            : "
-        f"{std_rmsle:.6f}"
-    )
-
-
-    print(
-        f"\nMean Best Iteration  : "
-        f"{mean_best_iteration}"
-    )
-
-
-    print(
-        f"Median Best Iteration: "
-        f"{median_best_iteration}"
+        "\nPayday improved:",
+        f"{improved_folds}/3 folds"
     )
 
 
     # =====================================================
-    # 19. 실험 판정
-    # =====================================================
-
-    print(
-        "\n"
-        + "=" * 70
-    )
-
-    print(
-        "EXPERIMENT COMPARISON"
-    )
-
-    print(
-        "=" * 70
-    )
-
-
-    print(
-        "Baseline:"
-    )
-
-
-    print(
-        "Lag 16 / 21 / 28 "
-        "+ Rolling Mean 7 / 28"
-    )
-
-
-    print(
-        f"RMSLE = "
-        f"{BASELINE_RMSLE:.6f}"
-    )
-
-
-    print(
-        "\nExperiment:"
-    )
-
-
-    print(
-        "Lag 16 / 21 / 28 "
-        "+ Lag 364 "
-        "+ Rolling Mean 7 / 28"
-    )
-
-
-    print(
-        f"RMSLE = "
-        f"{mean_rmsle:.6f}"
-    )
-
-
-    print(
-        f"\n변화량 = "
-        f"{overall_delta:+.6f}"
-    )
-
-
-    if mean_rmsle < BASELINE_RMSLE:
-
-        print(
-            "\n판정: 개선"
-        )
-
-        print(
-            "→ sales_lag_364 채택 후보"
-        )
-
-
-    elif mean_rmsle > BASELINE_RMSLE:
-
-        print(
-            "\n판정: 악화"
-        )
-
-        print(
-            "→ sales_lag_364 제외"
-        )
-
-
-    else:
-
-        print(
-            "\n판정: 동일"
-        )
-
-
-    # =====================================================
-    # 20. 피처 중요도
+    # Payday Importance
     # =====================================================
 
     all_importance = pd.concat(
@@ -2084,106 +1689,153 @@ def run_backtesting():
     )
 
 
-    mean_importance = (
-        summarize_feature_importance(
-            all_importance
+    payday_importance = (
+
+        all_importance.loc[
+            all_importance[
+                "feature"
+            ].isin(
+                PAYDAY_FEATURES
+            )
+        ]
+
+        .groupby(
+            "feature",
+            as_index=False,
+        )
+
+        .agg(
+            mean_gain_pct=(
+                "gain_pct",
+                "mean",
+            ),
+
+            mean_split_pct=(
+                "split_pct",
+                "mean",
+            ),
+
+            mean_split=(
+                "split",
+                "mean",
+            ),
+        )
+
+        .sort_values(
+            "mean_gain_pct",
+            ascending=False,
+        )
+    )
+
+
+    print(
+        "\n"
+        + "=" * 75
+    )
+
+    print(
+        "PAYDAY FEATURE IMPORTANCE"
+    )
+
+    print(
+        "=" * 75
+    )
+
+
+    print(
+        payday_importance
+        .round(4)
+        .to_string(
+            index=False
         )
     )
 
 
     # =====================================================
-    # 21. 최종 상태
+    # 최종 판정
     # =====================================================
 
     print(
         "\n"
-        + "=" * 70
+        + "=" * 90
     )
 
     print(
-        "BACKTEST STATUS"
+        "EXPERIMENT DECISION"
     )
 
     print(
-        "=" * 70
+        "=" * 90
     )
 
 
+    if mean_delta < 0:
+
+        print(
+            "RESULT: PAYDAY IMPROVED"
+        )
+
+        print(
+            f"Mean improvement: "
+            f"{-mean_delta:.6f}"
+        )
+
+    elif mean_delta > 0:
+
+        print(
+            "RESULT: PAYDAY WORSE"
+        )
+
+        print(
+            f"Mean degradation: "
+            f"{mean_delta:.6f}"
+        )
+
+    else:
+
+        print(
+            "RESULT: NO DIFFERENCE"
+        )
+
+
     print(
-        "Experiment:",
-        "Add sales_lag_364"
+        "Improved folds:",
+        f"{improved_folds}/3"
     )
 
-
     print(
-        "Folds:",
-        len(FOLDS)
+        "Baseline retrained:",
+        False
     )
 
-
     print(
-        "Features:",
-        len(FEATURES)
+        "n_estimators:",
+        6500
     )
 
-
     print(
-        "Short Lags:",
-        LAGS
-    )
-
-
-    print(
-        "Year Lag:",
-        YEAR_LAG
-    )
-
-
-    print(
-        "Rolling Used:",
-        [7, 28]
-    )
-
-
-    print(
-        "EMA:",
-        "Not used"
-    )
-
-
-    print(
-        "Early stopping rounds:",
+        "Early stopping:",
         EARLY_STOPPING_ROUNDS
-    )
-
-
-    print(
-        f"Mean RMSLE: "
-        f"{mean_rmsle:.6f}"
-    )
-
-
-    print(
-        f"Std RMSLE: "
-        f"{std_rmsle:.6f}"
     )
 
 
     return (
         results_df,
-        mean_importance,
+        summary_df,
+        payday_importance,
         all_importance,
     )
 
 
 # =========================================================
-# 22. 실행
+# 17. 실행
 # =========================================================
 
 if __name__ == "__main__":
 
     (
         results_df,
-        mean_importance,
+        summary_df,
+        payday_importance,
         all_importance,
     ) = run_backtesting()
