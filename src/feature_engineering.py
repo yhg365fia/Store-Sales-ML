@@ -3,12 +3,11 @@ import pandas as pd
 
 
 # =========================================================
-# 1. 날짜 피처 생성
+# 1. 날짜 피처
 # =========================================================
+
 def add_date_features(df):
-
     df = df.copy()
-
     df["date"] = pd.to_datetime(df["date"])
 
     df["year"] = df["date"].dt.year
@@ -21,18 +20,10 @@ def add_date_features(df):
         df["dayofweek"] >= 5
     ).astype(int)
 
-    # 연간 주기 표현
-    angle = (
-        2
-        * np.pi
-        * df["dayofyear"]
-        / 365.25
-    )
-
+    angle = 2 * np.pi * df["dayofyear"] / 365.25
     df["dayofyear_sin"] = np.sin(angle)
     df["dayofyear_cos"] = np.cos(angle)
 
-    # Payday
     df["is_15th"] = (
         df["date"].dt.day == 15
     ).astype(int)
@@ -43,77 +34,56 @@ def add_date_features(df):
 
     return df
 
+
 # =========================================================
-# 2. 프로모션 피처 생성
+# 2. 프로모션 피처
 # =========================================================
 
 def add_promotion_features(df):
-
     df = df.copy()
-
     df["is_promotion"] = (
         df["onpromotion"] > 0
     ).astype(int)
-
     return df
 
 
 # =========================================================
-# 3. Lag 피처 생성 — 3개 모두 사용
+# 3. Lag
 # =========================================================
 
 LAGS = (16, 21, 28)
 
 LAG_FEATURES = [
-    f"sales_lag_{lag}"
-    for lag in LAGS
+    f"sales_lag_{lag}" for lag in LAGS
 ]
 
 
 def add_lag_features(df, lags=LAGS):
-
     """
-    매장 × 상품군별 과거 판매량 피처 생성.
-
-    기본 피처:
-    - sales_lag_16
-    - sales_lag_21
-    - sales_lag_28
-
-    전제:
-    - 각 매장 × 상품군에 날짜별 한 행이 존재해야 함.
-    - 날짜 누락이 없어야 shift(lag)가 lag일 전을 의미함.
-    - 16일 일괄 예측을 기준으로 lag >= 16 사용.
-
-    초기 과거 기록 부족으로 발생한 결측치는 유지함.
+    날짜가 연속적이라는 전제에서 매장 × 상품군별 Lag 생성.
     """
-
     if any(lag < 16 for lag in lags):
         raise ValueError(
             "16일 일괄 예측에서는 lag를 16 이상으로 설정하세요."
         )
 
     df = df.copy()
-
     df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["store_nbr", "family", "date"])
 
-    df = df.sort_values(
-        ["store_nbr", "family", "date"]
-    )
-
-    grouped_sales = df.groupby(
+    grouped = df.groupby(
         ["store_nbr", "family"],
         observed=True,
     )["sales"]
 
     for lag in lags:
-        df[f"sales_lag_{lag}"] = grouped_sales.shift(lag)
+        df[f"sales_lag_{lag}"] = grouped.shift(lag)
 
     return df
 
 
 # =========================================================
-# 4. Rolling mean 피처 생성 — 3개 모두 사용
+# 4. Rolling mean — 보존, 이번 모델에서는 미사용
 # =========================================================
 
 ROLLING_SHIFT = 16
@@ -126,7 +96,6 @@ ROLLING_MEAN_FEATURES = [
 
 ROLLING_FEATURES = ROLLING_MEAN_FEATURES.copy()
 
-# 모델링 / 최종 제출 코드의 QC용 설정
 ROLLING_WINDOWS_BY_STAT = {
     "mean": ROLLING_WINDOWS,
 }
@@ -137,59 +106,27 @@ def add_rolling_features(
     shift=ROLLING_SHIFT,
     windows=ROLLING_WINDOWS,
 ):
-
-    """
-    매장 × 상품군별 과거 판매량 이동평균 생성.
-
-    기본 피처:
-    - sales_rolling_mean_16_7
-    - sales_rolling_mean_16_14
-    - sales_rolling_mean_16_28
-
-    사용 범위:
-    - window=7: 16~22일 전 판매량 평균.
-    - window=14: 16~29일 전 판매량 평균.
-    - window=28: 16~43일 전 판매량 평균.
-
-    전제:
-    - 날짜별 한 행이며 날짜 누락이 없어야 함.
-    - 16일 일괄 예측을 기준으로 shift >= 16 사용.
-
-    유효 판매량이 window개보다 적으면 결측치 유지.
-    """
-
     if shift < 16:
-        raise ValueError(
-            "16일 일괄 예측에서는 shift를 16 이상으로 설정하세요."
-        )
+        raise ValueError("shift는 16 이상이어야 합니다.")
 
     if any(window < 1 for window in windows):
-        raise ValueError(
-            "평균 구간의 크기는 1 이상으로 설정하세요."
-        )
+        raise ValueError("window는 1 이상이어야 합니다.")
 
     df = df.copy()
-
     df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["store_nbr", "family", "date"])
 
-    df = df.sort_values(
-        ["store_nbr", "family", "date"]
-    )
-
-    grouped_sales = df.groupby(
+    grouped = df.groupby(
         ["store_nbr", "family"],
         observed=True,
     )["sales"]
 
     for window in windows:
         df[f"sales_rolling_mean_{shift}_{window}"] = (
-            grouped_sales.transform(
+            grouped.transform(
                 lambda x: (
                     x.shift(shift)
-                    .rolling(
-                        window=window,
-                        min_periods=window,
-                    )
+                    .rolling(window=window, min_periods=window)
                     .mean()
                 )
             )
@@ -199,7 +136,7 @@ def add_rolling_features(
 
 
 # =========================================================
-# 5. EMA 피처 생성 — 28 / 364
+# 5. EMA — 보존, 이번 모델에서는 미사용
 # =========================================================
 
 EMA_SHIFT = 16
@@ -217,58 +154,24 @@ def add_ema_features(
     shift=EMA_SHIFT,
     spans=EMA_SPANS,
 ):
-
-    """
-    매장 × 상품군별 과거 판매량의 지수이동평균 생성.
-
-    기본 피처:
-    - sales_ema_16_28
-    - sales_ema_16_364
-
-    설정:
-    - shift=16: 예측 대상 날짜의 16일 전까지 사용.
-    - adjust=False: 재귀식 방식.
-    - min_periods=1: 첫 유효 판매량부터 계산.
-
-    주의:
-    - span은 가중치 감소 속도를 정하는 설정.
-    - span=364는 364일 전 판매량을 가져오는 설정이 아님.
-    - 첫 유효 판매량을 초기 EMA로 사용함.
-
-    전제:
-    - 날짜별 한 행이며 날짜 누락이 없어야 함.
-    - 16일 일괄 예측을 기준으로 shift >= 16 사용.
-
-    원본 판매량에 결측치가 없다면
-    각 그룹의 처음 shift개 행은 결측치로 남음.
-    """
-
     if shift < 16:
-        raise ValueError(
-            "16일 일괄 예측에서는 shift를 16 이상으로 설정하세요."
-        )
+        raise ValueError("shift는 16 이상이어야 합니다.")
 
     if any(span < 1 for span in spans):
-        raise ValueError(
-            "EMA span은 1 이상으로 설정하세요."
-        )
+        raise ValueError("span은 1 이상이어야 합니다.")
 
     df = df.copy()
-
     df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["store_nbr", "family", "date"])
 
-    df = df.sort_values(
-        ["store_nbr", "family", "date"]
-    )
-
-    grouped_sales = df.groupby(
+    grouped = df.groupby(
         ["store_nbr", "family"],
         observed=True,
     )["sales"]
 
     for span in spans:
         df[f"sales_ema_{shift}_{span}"] = (
-            grouped_sales.transform(
+            grouped.transform(
                 lambda x: (
                     x.shift(shift)
                     .ewm(
@@ -285,54 +188,277 @@ def add_ema_features(
     return df
 
 
-# =========================================================
-# 6. 전체 시계열 피처 목록 — 총 8개
-# =========================================================
-
 TIME_SERIES_FEATURES = (
-    LAG_FEATURES
-    + ROLLING_FEATURES
-    + EMA_FEATURES
+    LAG_FEATURES + ROLLING_FEATURES + EMA_FEATURES
 )
 
-# 포함되는 피처:
-# sales_lag_16
-# sales_lag_21
-# sales_lag_28
-# sales_rolling_mean_16_7
-# sales_rolling_mean_16_14
-# sales_rolling_mean_16_28
-# sales_ema_16_28
-# sales_ema_16_364
+
+# =========================================================
+# 6. Group Statistics — A / B / C / D / E 목록
+# =========================================================
+
+GROUP_STAT_FEATURES_A = [
+    "family_dayofweek_mean",
+]
+
+GROUP_STAT_FEATURES_B = [
+    "store_family_dayofweek_mean",
+]
+
+GROUP_STAT_FEATURES_C = [
+    "store_family_mean",
+]
+
+GROUP_STAT_FEATURES_D = [
+    "family_holiday_mean",
+]
+
+GROUP_STAT_FEATURES_E = [
+    "family_event_group_mean",
+]
+
+# 이전 A 코드와의 import 호환용
+GROUP_STAT_FEATURES = GROUP_STAT_FEATURES_A.copy()
 
 
 # =========================================================
-# 7. 일반 Feature Engineering 파이프라인
+# 7. 과거 누적 평균 공통 함수
+# =========================================================
+
+def _add_group_past_mean(
+    train_df,
+    valid_df,
+    group_cols,
+    feature_name,
+):
+    """
+    Train:
+        각 행의 전날까지의 같은 그룹 sales 평균.
+
+    Validation:
+        Fold Train 종료일까지 계산한 같은 그룹 평균 고정.
+
+    평균 대상:
+        로그 변환 전 원본 sales.
+
+    과거 기록이 없는 그룹:
+        NaN 유지. LightGBM이 처리.
+
+    Validation sales는 통계 계산에 사용하지 않음.
+    """
+    if train_df.empty or valid_df.empty:
+        raise ValueError("Train 또는 Validation이 비어 있습니다.")
+
+    train_df = train_df.copy()
+    valid_df = valid_df.copy()
+
+    train_df["date"] = pd.to_datetime(train_df["date"])
+    valid_df["date"] = pd.to_datetime(valid_df["date"])
+
+    for name, df in [("Train", train_df), ("Valid", valid_df)]:
+        if df[["date", *group_cols]].isna().any().any():
+            raise ValueError(f"{name} 통계 그룹 키에 결측치가 있습니다.")
+
+        if not df["date"].eq(df["date"].dt.normalize()).all():
+            raise ValueError("date는 시간 정보 없는 일별 날짜여야 합니다.")
+
+        if not np.array_equal(
+            df["dayofweek"].to_numpy(),
+            df["date"].dt.dayofweek.to_numpy(),
+        ):
+            raise ValueError(f"{name}의 dayofweek가 날짜와 다릅니다.")
+
+    train_end = train_df["date"].max()
+
+    if valid_df["date"].min() <= train_end:
+        raise ValueError("Validation은 Train 종료일 이후여야 합니다.")
+
+    def normalize_keys(frame):
+        # 선택한 그룹 키만 정규화: D/E에는 dayofweek가 없음.
+        if "family" in group_cols:
+            frame["family"] = frame["family"].astype(str)
+        if "dayofweek" in group_cols:
+            frame["dayofweek"] = frame["dayofweek"].astype("int64")
+        if "store_nbr" in group_cols:
+            frame["store_nbr"] = frame["store_nbr"].astype("int64")
+        if "is_holiday" in group_cols:
+            frame["is_holiday"] = frame["is_holiday"].astype("int8")
+        if "event_group" in group_cols:
+            frame["event_group"] = frame["event_group"].astype(str)
+        return frame
+
+    # Train sales만 통계 재료로 사용
+    history = train_df[
+        ["date", *group_cols, "sales"]
+    ].copy()
+
+    sales = history["sales"].to_numpy(dtype=float)
+
+    if not np.isfinite(sales).all() or (sales < 0).any():
+        raise ValueError("Train sales에 결측·무한대·음수가 있습니다.")
+
+    history = normalize_keys(history)
+
+    # 날짜 × 그룹별 합계와 행 수
+    daily = (
+        history.groupby(
+            ["date", *group_cols],
+            observed=True,
+            as_index=False,
+        )
+        .agg(
+            sales_sum=("sales", "sum"),
+            sales_count=("sales", "count"),
+        )
+        .sort_values([*group_cols, "date"])
+    )
+
+    grouped = daily.groupby(
+        group_cols,
+        observed=True,
+        sort=False,
+    )
+
+    daily["cum_sum"] = grouped["sales_sum"].cumsum()
+    daily["cum_count"] = grouped["sales_count"].cumsum()
+
+    daily[feature_name] = (
+        daily["cum_sum"] / daily["cum_count"]
+    )
+
+    lookup = (
+        daily[["date", *group_cols, feature_name]]
+        .rename(columns={"date": "history_date"})
+        .sort_values("history_date")
+    )
+
+    def attach(df, is_validation):
+        query = df[["date", *group_cols]].copy()
+        query = normalize_keys(query)
+        query["_row_order"] = np.arange(len(query))
+
+        if is_validation:
+            query["cutoff_date"] = train_end
+        else:
+            query["cutoff_date"] = (
+                query["date"] - pd.Timedelta(days=1)
+            )
+
+        matched = pd.merge_asof(
+            query.sort_values("cutoff_date"),
+            lookup,
+            left_on="cutoff_date",
+            right_on="history_date",
+            by=group_cols,
+            direction="backward",
+            allow_exact_matches=True,
+        )
+
+        invalid = (
+            matched["history_date"].notna()
+            & matched["history_date"].gt(matched["cutoff_date"])
+        )
+
+        if invalid.any():
+            raise ValueError("기준일 이후의 통계가 연결되었습니다.")
+
+        matched = matched.sort_values("_row_order")
+        df[feature_name] = matched[feature_name].to_numpy()
+
+        return df
+
+    return (
+        attach(train_df, is_validation=False),
+        attach(valid_df, is_validation=True),
+    )
+
+
+# =========================================================
+# 8. A: 상품군 × 요일 — 함수 보존
+# =========================================================
+
+def add_family_dayofweek_mean(train_df, valid_df):
+    return _add_group_past_mean(
+        train_df=train_df,
+        valid_df=valid_df,
+        group_cols=["family", "dayofweek"],
+        feature_name=GROUP_STAT_FEATURES_A[0],
+    )
+
+
+# =========================================================
+# 9. B: 매장 × 상품군 × 요일 — 이번 실험
+# =========================================================
+
+def add_store_family_dayofweek_mean(train_df, valid_df):
+    return _add_group_past_mean(
+        train_df=train_df,
+        valid_df=valid_df,
+        group_cols=["store_nbr", "family", "dayofweek"],
+        feature_name=GROUP_STAT_FEATURES_B[0],
+    )
+
+
+# =========================================================
+# C: 매장 × 상품군 — 기존 기능 호환
+# =========================================================
+
+def add_store_family_mean(train_df, valid_df):
+    return _add_group_past_mean(
+        train_df=train_df,
+        valid_df=valid_df,
+        group_cols=["store_nbr", "family"],
+        feature_name=GROUP_STAT_FEATURES_C[0],
+    )
+
+
+# =========================================================
+# D: 상품군 × 휴일 여부
+# =========================================================
+
+def add_family_holiday_mean(train_df, valid_df):
+    return _add_group_past_mean(
+        train_df=train_df,
+        valid_df=valid_df,
+        group_cols=["family", "is_holiday"],
+        feature_name=GROUP_STAT_FEATURES_D[0],
+    )
+
+
+# =========================================================
+# E: 상품군 × 이벤트 종류
+# =========================================================
+
+def add_family_event_group_mean(train_df, valid_df):
+    return _add_group_past_mean(
+        train_df=train_df,
+        valid_df=valid_df,
+        group_cols=["family", "event_group"],
+        feature_name=GROUP_STAT_FEATURES_E[0],
+    )
+
+
+# =========================================================
+# 10. 일반 Feature Engineering 파이프라인
 # =========================================================
 
 def apply_feature_engineering(df):
-
     df = add_date_features(df)
     df = add_promotion_features(df)
 
-    # Lag / Rolling mean / EMA는 과거 판매량이 준비된
-    # 데이터에서 모델링 코드가 별도로 호출.
-    # Test만으로는 과거 판매량을 가져올 수 없음.
-
+    # Lag / Rolling / EMA는 과거 판매량 준비 후 별도 호출.
+    # Group Statistics는 Fold 분리 후 별도 호출.
     return df
 
 
 # =========================================================
-# 8. Holiday 피처 실험용 목록
+# 11. Holiday 실험용 목록
 # =========================================================
 
-# A: Holiday 개수만 사용
 HOLIDAY_FEATURES_A = [
-    "holiday_count"
+    "holiday_count",
 ]
 
-
-# B: 이벤트 종류만 사용
 HOLIDAY_FEATURES_B = [
     "event_christmas",
     "event_new_year",
@@ -342,12 +468,70 @@ HOLIDAY_FEATURES_B = [
     "event_city_foundation",
     "event_good_friday",
     "event_labor_day",
-    "event_other"
+    "event_other",
 ]
 
-
-# C: Holiday 개수 + 이벤트 종류
 HOLIDAY_FEATURES_C = (
-    HOLIDAY_FEATURES_A
-    + HOLIDAY_FEATURES_B
+    HOLIDAY_FEATURES_A + HOLIDAY_FEATURES_B
 )
+
+# =========================================================
+# 12. 휴일 / 이벤트 그룹 키 생성 — D / E 실험용
+# =========================================================
+
+EVENT_FLAG_COLUMNS = HOLIDAY_FEATURES_B.copy()
+
+
+def add_holiday_group_keys(df):
+    """
+    main()이 이미 매장에 맞춰 병합한 holiday_count와 event_* 컬럼 활용.
+
+    D: is_holiday = holiday_count > 0
+    E: event_group
+       - No Event       : 휴일 아님
+       - Other Holiday  : 휴일이나 9개 이벤트 플래그 없음
+       - christmas 등   : 해당 이벤트 플래그 한 종류
+       - Multiple Events: 여러 이벤트 플래그 동시에 참
+
+    새 그룹 키는 미래에 알려진 달력 정보로만 생성; sales를 사용하지 않음.
+    """
+    df = df.copy()
+    required = ["holiday_count", *EVENT_FLAG_COLUMNS]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"Holiday 그룹화에 필요한 컬럼이 없습니다: {missing}")
+
+    count = pd.to_numeric(df["holiday_count"], errors="coerce")
+    if count.isna().any() or not np.isfinite(count.to_numpy(dtype=float)).all():
+        raise ValueError("holiday_count에 유효하지 않은 값이 있습니다.")
+    if (count < 0).any():
+        raise ValueError("holiday_count는 음수일 수 없습니다.")
+
+    flags = df[EVENT_FLAG_COLUMNS]
+    if flags.isna().any().any():
+        raise ValueError("이벤트 플래그에 결측치가 있습니다.")
+    if not flags.isin([0, 1, False, True]).all().all():
+        raise ValueError("이벤트 플래그는 0 또는 1이어야 합니다.")
+
+    active = flags.astype("int8")
+    num_active = active.sum(axis=1).to_numpy()
+    is_holiday = count.gt(0).to_numpy()
+    if ((~is_holiday) & (num_active > 0)).any():
+        raise ValueError(
+            "holiday_count=0인데 이벤트 플래그가 1입니다. "
+            "main()의 Holiday Store Matching을 확인하세요."
+        )
+
+    df["is_holiday"] = is_holiday.astype("int8")
+
+    # 날짜에 이벤트가 여러 개 중첩돼도 임의로 하나를 선택하지 않음.
+    # E의 EDA에서 중첩 빈도도 확인 가능.
+    group = np.full(len(df), "No Event", dtype=object)
+    group[is_holiday & (num_active == 0)] = "Other Holiday"
+    group[num_active > 1] = "Multiple Events"
+    for col in EVENT_FLAG_COLUMNS:
+        mask = (num_active == 1) & active[col].to_numpy(dtype=bool)
+        group[mask] = col.removeprefix("event_")
+
+    df["event_group"] = group
+    return df
