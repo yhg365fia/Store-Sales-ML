@@ -1,19 +1,15 @@
 """
-Payday Baseline 29개 피처 단독 재학습 + 전체 Feature Importance 출력.
-
-- 기존 main.py의 main() -> (train, test, holidays) 사용
-- 기존 feature_engineering.py의 add_lag_features() 사용
-- 기존 3-Fold / 16일 예측 / LightGBM 파라미터 유지
-- n_estimators=8000, Early Stopping=150
-- Group Statistics A~E는 추가하지 않음
-- 실제 Fold별 best_iteration 및 RMSLE 재계산
-- 모든 29개 피처의 Gain/Split 중요도 3-Fold 평균과 Fold별 수치 출력 및 CSV 저장
-
-실행: python src/modeling.py  (main.py와 feature_engineering.py도 src/에 있어야 함)
-저장: 프로젝트/results/baseline_8000/*.csv
+Payday Baseline vs feature ablation: 3-Fold mean Gain/Split comparison.
+Place this file at src/modeling.py with existing main.py and feature_engineering.py.
+Run from project root: python src/modeling.py
+Default: baseline (29) + drop_is_weekend (28), total 6 models.
+Edit ABLATION_EXPERIMENTS below to add independent or joint removals.
+Results: results/feature_ablation/<timestamp>/
 """
 
 import gc
+import json
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -56,12 +52,10 @@ FORECAST_HORIZON = 16
 N_ESTIMATORS = 8000
 EARLY_STOPPING_ROUNDS = 150
 
-# 과거 C 실험에서 실제로 재학습한 8,000 상한 Baseline 기록.
-# 이번 스크립트는 기록을 재사용하지 않고 3-Fold를 새로 학습해 검증함.
-REFERENCE_8000 = {
-    "Fold 1": {"best_iteration": 6476, "rmsle": 0.382044},
-    "Fold 2": {"best_iteration": 2697, "rmsle": 0.405838},
-    "Fold 3": {"best_iteration": 6902, "rmsle": 0.394152},
+# 각 항목은 동일한 29개 Baseline에서 독립적으로 제거합니다.
+# 두 피처를 한 목록에 넣으면 두 피처를 동시에 제거하는 실험입니다.
+ABLATION_EXPERIMENTS = {
+    "drop_is_weekend": ["is_weekend"],
 }
 
 FOLDS = [
@@ -71,7 +65,7 @@ FOLDS = [
 ]
 
 # modeling.py가 src/ 안에 있을 때 프로젝트 루트의 results/ 사용.
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "results" / "baseline_8000"
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "results" / "feature_ablation"
 
 
 # =========================================================
@@ -79,6 +73,21 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "results" / "baseline_8000
 # =========================================================
 
 def validate_configuration():
+    if not ABLATION_EXPERIMENTS:
+        raise ValueError("Ablation 실험을 하나 이상 설정하세요.")
+    for name, removed in ABLATION_EXPERIMENTS.items():
+        if (not isinstance(name, str) or not name or name == "baseline"
+                or not all(c.isalnum() or c in "_-" for c in name)):
+            raise ValueError("실험명은 baseline 이외의 문자/숫자/_/-로 지정하세요.")
+        if not isinstance(removed, list) or not removed:
+            raise ValueError(f"{name}: 제거 피처는 비어 있지 않은 리스트여야 합니다.")
+        if len(set(removed)) != len(removed):
+            raise ValueError(f"{name}: 제거 목록에 중복이 있습니다.")
+        unknown = set(removed) - set(BASELINE_FEATURES)
+        if unknown:
+            raise ValueError(f"{name}: 존재하지 않는 피처 {sorted(unknown)}")
+        if len(removed) >= len(BASELINE_FEATURES):
+            raise ValueError("모든 피처를 제거할 수 없습니다.")
     if tuple(LAGS) != (16, 21, 28):
         raise ValueError("LAGS는 (16, 21, 28)이어야 합니다.")
     if list(LAG_FEATURES) != ["sales_lag_16", "sales_lag_21", "sales_lag_28"]:
@@ -122,6 +131,7 @@ def prepare_features(df):
     expected_calendar = {
         "dayofyear": df["date"].dt.dayofyear,
         "dayofweek": df["date"].dt.dayofweek,
+        "is_weekend": (df["date"].dt.dayofweek >= 5).astype(int),
         "is_15th": (df["date"].dt.day == 15).astype(int),
         "is_month_end": df["date"].dt.is_month_end.astype(int),
     }
@@ -149,13 +159,14 @@ def prepare_features(df):
             raise ValueError(f"sales_lag_{lag} 결측 위치가 예상과 다릅니다.")
 
     print("\n" + "=" * 80)
-    print("PAYDAY BASELINE (29 FEATURES) — EXACT 8000-CAP IMPORTANCE")
+    print("FEATURE ABLATION — BASELINE VS REMOVED FEATURES")
     print("=" * 80)
     print(f"Baseline features: {len(BASELINE_FEATURES)}")
     print("Group Statistics: NOT INCLUDED")
     print(f"n_estimators: {N_ESTIMATORS} / early stopping: {EARLY_STOPPING_ROUNDS}")
-    print("3-Fold Baseline retraining: ENABLED (3 models)")
-    print("Lag missing:\n", df[LAG_FEATURES].isna().sum().to_string())
+    print(f"Total models: {len(FOLDS) * (1 + len(ABLATION_EXPERIMENTS))}")
+    print("Weekend QC: is_weekend == (dayofweek >= 5): OK")
+    print("Lag missing:\n", df[list(LAG_FEATURES)].isna().sum().to_string())
     print("Common QC: OK")
     return df
 
@@ -191,26 +202,26 @@ def make_fold(df, config):
 
 
 # =========================================================
-# 4. 모델 데이터: 정확히 29개만 사용
+# 4. 실험별 모델 데이터: 제거 목록에 맞춰 구성
 # =========================================================
 
-def prepare_model_data(train_df, valid_df):
-    X_train = train_df[BASELINE_FEATURES].copy()
-    X_valid = valid_df[BASELINE_FEATURES].copy()
+def prepare_model_data(train_df, valid_df, features):
+    X_train = train_df[features].copy()
+    X_valid = valid_df[features].copy()
 
     # 기존과 동일: Train에서 관측된 범주만으로 카테고리 결정.
-    for feature in CATEGORICAL_FEATURES:
+    for feature in (f for f in CATEGORICAL_FEATURES if f in features):
         categories = pd.Index(train_df[feature].dropna().unique())
         X_train[feature] = pd.Categorical(X_train[feature], categories=categories)
         X_valid[feature] = pd.Categorical(X_valid[feature], categories=categories)
 
-    required_non_missing = [f for f in BASELINE_FEATURES if f not in LAG_FEATURES]
+    required_non_missing = [f for f in features if f not in LAG_FEATURES]
     for name, X in (("Train", X_train), ("Valid", X_valid)):
         if X[required_non_missing].isna().any().any():
             raise ValueError(f"{name}: Lag 외 일반 피처에 결측치가 있습니다.")
-        if len(X.columns) != 29:
-            raise ValueError(f"{name}: 입력 피처가 29개가 아닙니다.")
-    if X_valid[LAG_FEATURES].isna().any().any():
+        if list(X.columns) != features:
+            raise ValueError(f"{name}: 입력 피처 구성 또는 순서가 설정과 다릅니다.")
+    if X_valid[[f for f in LAG_FEATURES if f in features]].isna().any().any():
         raise ValueError("Validation Lag에 결측치가 있습니다.")
 
     return (
@@ -258,15 +269,15 @@ def calculate_rmsle(y_true, pred_log):
 
 
 # =========================================================
-# 6. Feature Importance: 모든 Fold, 29개, Gain + Split
+# 6. Feature Importance: 모든 Fold, 실험별 Gain + Split
 # =========================================================
 
-def get_feature_importance(model, fold_name):
+def get_feature_importance(model, fold_name, features):
     booster = model.booster_
     iteration = int(model.best_iteration_)
     names = booster.feature_name()
-    if set(names) != set(BASELINE_FEATURES) or len(names) != 29:
-        raise ValueError("학습 모델의 피처 구성이 29개 Payday Baseline과 다릅니다.")
+    if names != features:
+        raise ValueError("학습 모델의 피처 구성이 실험 설정과 다릅니다.")
 
     gain = booster.feature_importance(importance_type="gain", iteration=iteration)
     split = booster.feature_importance(importance_type="split", iteration=iteration)
@@ -288,9 +299,9 @@ def get_feature_importance(model, fold_name):
 # 7. 한 Fold 학습
 # =========================================================
 
-def train_baseline_model(train_df, valid_df, fold_name):
+def train_experiment_model(train_df, valid_df, fold_name, features):
     X_train, X_valid, y_train, y_valid_log, y_valid = prepare_model_data(
-        train_df, valid_df
+        train_df, valid_df, features
     )
     model = build_model()
     model.fit(
@@ -298,7 +309,7 @@ def train_baseline_model(train_df, valid_df, fold_name):
         y_train,
         eval_set=[(X_valid, y_valid_log)],
         eval_metric="rmse",
-        categorical_feature=CATEGORICAL_FEATURES,
+        categorical_feature=[f for f in CATEGORICAL_FEATURES if f in features],
         callbacks=[
             early_stopping(stopping_rounds=EARLY_STOPPING_ROUNDS, verbose=True),
             log_evaluation(period=100),
@@ -307,10 +318,10 @@ def train_baseline_model(train_df, valid_df, fold_name):
     iteration = int(model.best_iteration_)
     pred_log = model.predict(X_valid, num_iteration=iteration)
     score = calculate_rmsle(y_valid, pred_log)
-    importance_df = get_feature_importance(model, fold_name)
+    importance_df = get_feature_importance(model, fold_name, features)
 
     print(f"\nBest iteration: {iteration}")
-    print(f"Baseline RMSLE: {score:.6f}")
+    print(f"RMSLE: {score:.6f}")
     if iteration >= N_ESTIMATORS - EARLY_STOPPING_ROUNDS:
         print("CHECK: Best iteration이 학습 상한에 가깝습니다.")
     del X_train, X_valid, y_train, y_valid_log, y_valid, pred_log, model
@@ -319,98 +330,152 @@ def train_baseline_model(train_df, valid_df, fold_name):
 
 
 # =========================================================
-# 8. 3-Fold 실행 및 전체 표 생성
+# 8. 3-Fold 실행, 전체 중요도 및 제거 전후 비교
 # =========================================================
+
+
+def summarize_importance(per_fold):
+    result = (
+        per_fold.groupby("feature", as_index=False)
+        .agg(mean_gain_pct=("gain_pct", "mean"),
+             mean_split_pct=("split_pct", "mean"),
+             mean_gain=("gain", "mean"), mean_split=("split", "mean"))
+        .sort_values("mean_gain_pct", ascending=False)
+        .reset_index(drop=True)
+    )
+    result.insert(0, "gain_rank", result["mean_gain_pct"].rank(
+        method="min", ascending=False).astype(int))
+    result["split_rank"] = result["mean_split_pct"].rank(
+        method="min", ascending=False).astype(int)
+    for col in ["mean_gain_pct", "mean_split_pct"]:
+        if not np.isclose(result[col].sum(), 100):
+            raise ValueError(f"{col} 합계가 100%가 아닙니다.")
+    return result
+
+
+def compare_importance(baseline, experiment, removed):
+    columns = ["feature", "gain_rank", "split_rank", "mean_gain_pct",
+               "mean_split_pct", "mean_gain", "mean_split"]
+    result = baseline[columns].merge(
+        experiment[columns], on="feature", how="left",
+        suffixes=("_baseline", "_experiment"), validate="one_to_one",
+    )
+    result["removed"] = result["feature"].isin(removed)
+    # 제거 피처의 실험 중요도/순위는 NaN 유지: 실제 측정된 0과 구분.
+    for metric in ["gain", "split"]:
+        result[f"delta_{metric}_pp"] = (
+            result[f"mean_{metric}_pct_experiment"]
+            - result[f"mean_{metric}_pct_baseline"]
+        )
+    return result.sort_values("gain_rank_baseline")
+
 
 def run_backtesting(save_csv=True):
     validate_configuration()
+    experiments = {"baseline": [], **ABLATION_EXPERIMENTS}
+    run_dir = OUTPUT_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    if save_csv:
+        run_dir.mkdir(parents=True, exist_ok=False)
+        metadata = {
+            "baseline_features": BASELINE_FEATURES,
+            "experiments_removed_features": experiments,
+            "folds": FOLDS,
+            "model_parameters": build_model().get_params(),
+            "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+            "target": "log1p(sales)",
+        }
+        (run_dir / "run_config.json").write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     train, test, holidays = main()
     del test, holidays
     gc.collect()
     train = prepare_features(train)
+    fold_rows, importance_parts = [], []
 
-    fold_rows, fold_importances = [], []
+    # Fold 데이터는 한 번 준비하고, 같은 Fold에서 각 모델을 순차 학습.
     for config in FOLDS:
-        fold_name = config["fold"]
-        print("\n" + "=" * 85)
-        print(f"PAYDAY BASELINE — {fold_name}")
-        print("=" * 85)
         train_df, valid_df = make_fold(train, config)
-        iteration, score, importance = train_baseline_model(
-            train_df, valid_df, fold_name
-        )
-        reference = REFERENCE_8000[fold_name]
-        fold_rows.append({
-            "fold": fold_name,
-            "best_iteration": iteration,
-            "rmsle": score,
-            "reference_best_iteration": reference["best_iteration"],
-            "reference_rmsle": reference["rmsle"],
-            "delta_vs_reference": score - reference["rmsle"],
-        })
-        fold_importances.append(importance)
-        del train_df, valid_df, importance
+        for experiment, removed in experiments.items():
+            features = [f for f in BASELINE_FEATURES if f not in removed]
+            print("\n" + "=" * 85)
+            print(f"{experiment} | {config['fold']} | {len(features)} features")
+            print("Removed:", removed)
+            iteration, score, importance = train_experiment_model(
+                train_df, valid_df, config["fold"], features
+            )
+            fold_rows.append({
+                "experiment": experiment, "fold": config["fold"],
+                "feature_count": len(features), "best_iteration": iteration,
+                "rmsle": score,
+            })
+            importance.insert(0, "experiment", experiment)
+            importance_parts.append(importance)
+            # 장시간 실행 중에도 완료한 결과는 보존.
+            if save_csv:
+                pd.DataFrame(fold_rows).to_csv(
+                    run_dir / "fold_results_partial.csv", index=False, encoding="utf-8-sig")
+                pd.concat(importance_parts, ignore_index=True).to_csv(
+                    run_dir / "per_fold_importance_partial.csv", index=False, encoding="utf-8-sig")
+        del train_df, valid_df
         gc.collect()
 
     fold_results = pd.DataFrame(fold_rows)
-    per_fold_importance = pd.concat(fold_importances, ignore_index=True)
-
-    mean_importance = (
-        per_fold_importance
-        .groupby("feature", as_index=False)
-        .agg(
-            mean_gain_pct=("gain_pct", "mean"),
-            mean_split_pct=("split_pct", "mean"),
-            mean_gain=("gain", "mean"),
-            mean_split=("split", "mean"),
-        )
-        .sort_values("mean_gain_pct", ascending=False)
-        .reset_index(drop=True)
+    all_importance = pd.concat(importance_parts, ignore_index=True)
+    baseline_scores = fold_results.loc[
+        fold_results["experiment"].eq("baseline")].set_index("fold")["rmsle"]
+    fold_results["baseline_rmsle"] = fold_results["fold"].map(baseline_scores)
+    fold_results["delta_rmsle"] = fold_results["rmsle"] - fold_results["baseline_rmsle"]
+    summary = fold_results.groupby("experiment", sort=False, as_index=False).agg(
+        feature_count=("feature_count", "first"),
+        mean_rmsle=("rmsle", "mean"), std_rmsle=("rmsle", "std"),
+        mean_delta_rmsle=("delta_rmsle", "mean"),
     )
-    # 평균 중요도 기준 순위. 평균 내림차순으로 정렬한 후 부여.
-    mean_importance.insert(0, "gain_rank", np.arange(1, len(mean_importance) + 1))
-    split_ranks = mean_importance["mean_split_pct"].rank(method="min", ascending=False)
-    mean_importance.insert(4, "split_rank", split_ranks.astype(int))
+    means, comparisons = {}, {}
+    for experiment, removed in experiments.items():
+        per_fold = all_importance.loc[all_importance["experiment"].eq(experiment)]
+        expected_count = len(BASELINE_FEATURES) - len(removed)
+        if len(per_fold) != len(FOLDS) * expected_count:
+            raise ValueError(f"{experiment}: 중요도 행 수가 예상과 다릅니다.")
+        means[experiment] = summarize_importance(per_fold)
+        print(f"\nALL FEATURES — {experiment} — 3-FOLD MEAN")
+        print(means[experiment].round(4).to_string(index=False))
+        if save_csv:
+            means[experiment].to_csv(run_dir / f"{experiment}_mean_importance.csv",
+                                     index=False, encoding="utf-8-sig")
+        if experiment != "baseline":
+            comparison = compare_importance(means["baseline"], means[experiment], removed)
+            comparisons[experiment] = comparison
+            display_cols = ["feature", "removed", "mean_gain_pct_baseline",
+                            "mean_gain_pct_experiment", "delta_gain_pp",
+                            "mean_split_pct_baseline", "mean_split_pct_experiment",
+                            "delta_split_pp"]
+            print(f"\nIMPORTANCE CHANGE — {experiment} (delta: percentage points)")
+            print(comparison[display_cols].round(4).to_string(index=False))
+            print("\nFOCUS: dayofweek / is_weekend")
+            print(comparison.loc[comparison["feature"].isin(
+                ["dayofweek", "is_weekend"]), display_cols].round(4).to_string(index=False))
+            if save_csv:
+                comparison.to_csv(run_dir / f"{experiment}_importance_comparison.csv",
+                                  index=False, encoding="utf-8-sig")
 
-    if len(mean_importance) != 29 or len(per_fold_importance) != 3 * 29:
-        raise ValueError("Feature Importance 출력 행 수가 29 / 87과 다릅니다.")
-    if not np.isclose(mean_importance["mean_gain_pct"].sum(), 100.0):
-        raise ValueError("평균 Gain Importance 비율의 합이 100%가 아닙니다.")
-    if not np.isclose(mean_importance["mean_split_pct"].sum(), 100.0):
-        raise ValueError("평균 Split Importance 비율의 합이 100%가 아닙니다.")
-
-    print("\n" + "=" * 95)
-    print("PAYDAY BASELINE — 8000-CAP FOLD RESULTS")
-    print("=" * 95)
+    print("\nFOLD RESULTS (negative delta_rmsle = improvement)")
     print(fold_results.round(6).to_string(index=False))
-    print("\nMean RMSLE:", f"{fold_results['rmsle'].mean():.6f}")
-    print("Std RMSLE :", f"{fold_results['rmsle'].std(ddof=1):.6f}")
-    print("\n" + "=" * 95)
-    print("ALL 29 FEATURE IMPORTANCE — 3-FOLD MEAN (GAIN SORTED)")
-    print("=" * 95)
-    print(mean_importance.round(4).to_string(index=False))
-
-    print("\n" + "=" * 95)
-    print("PER-FOLD FEATURE IMPORTANCE (29 FEATURES × 3 FOLDS)")
-    print("=" * 95)
-    for fold_name, group in per_fold_importance.groupby("fold", sort=False):
-        print(f"\n{fold_name}")
-        print(group.sort_values("gain_pct", ascending=False).round(4).to_string(index=False))
-
+    print("\nSCORE SUMMARY")
+    print(summary.round(6).to_string(index=False))
+    print("\nNOTE: Gain/Split percentages are relative; raw totals also depend on best_iteration.")
     if save_csv:
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        fold_results.to_csv(OUTPUT_DIR / "baseline_8000_fold_results.csv", index=False, encoding="utf-8-sig")
-        mean_importance.to_csv(OUTPUT_DIR / "baseline_8000_mean_importance_29.csv", index=False, encoding="utf-8-sig")
-        per_fold_importance.to_csv(OUTPUT_DIR / "baseline_8000_per_fold_importance_87.csv", index=False, encoding="utf-8-sig")
-        print("\nCSV 저장 위치:", OUTPUT_DIR)
-        print(" - baseline_8000_fold_results.csv")
-        print(" - baseline_8000_mean_importance_29.csv")
-        print(" - baseline_8000_per_fold_importance_87.csv")
-
+        for filename, frame in [
+            ("fold_results.csv", fold_results), ("score_summary.csv", summary),
+            ("per_fold_importance.csv", all_importance),
+        ]:
+            frame.to_csv(run_dir / filename, index=False, encoding="utf-8-sig")
+        print("\nCSV 저장 위치:", run_dir)
     del train
     gc.collect()
-    return fold_results, mean_importance, per_fold_importance
+    return fold_results, means, comparisons
 
 
 if __name__ == "__main__":
-    fold_results, mean_importance, per_fold_importance = run_backtesting()
+    fold_results, mean_importances, importance_comparisons = run_backtesting()
