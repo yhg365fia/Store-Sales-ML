@@ -1,0 +1,16 @@
+﻿experiment,fold,added_features,feature_count,baseline_rmsle,baseline_best_iteration,best_iteration,rmsle,delta_rmsle
+transactions_lag,Fold 1,transactions_lag_16|transactions_lag_21|transactions_lag_28,32,0.382044,6476,6042,0.382512510948229,0.0004685109482290284
+transactions_lag,Fold 2,transactions_lag_16|transactions_lag_21|transactions_lag_28,32,0.405838,2697,1442,0.409387453243325,0.003549453243325007
+transactions_lag,Fold 3,transactions_lag_16|transactions_lag_21|transactions_lag_28,32,0.394152,6902,7334,0.3927196894481677,-0.0014323105518322943
+transactions_rolling,Fold 1,transactions_rolling_mean_16_7|transactions_rolling_mean_16_14|transactions_rolling_mean_16_28,32,0.382044,6476,1882,0.38954065721660464,0.007496657216604641
+transactions_rolling,Fold 2,transactions_rolling_mean_16_7|transactions_rolling_mean_16_14|transactions_rolling_mean_16_28,32,0.405838,2697,2788,0.4047881276602522,-0.0010498723397477927
+transactions_rolling,Fold 3,transactions_rolling_mean_16_7|transactions_rolling_mean_16_14|transactions_rolling_mean_16_28,32,0.394152,6902,5336,0.39953063195843763,0.00537863195843763
+oil_raw,Fold 1,dcoilwtico,30,0.382044,6476,5894,0.37885668546581036,-0.0031873145341896336
+oil_raw,Fold 2,dcoilwtico,30,0.405838,2697,3630,0.40041916944947165,-0.005418830550528331
+oil_raw,Fold 3,dcoilwtico,30,0.394152,6902,5316,0.40057064832721573,0.006418648327215726
+oil_rolling_mean,Fold 1,oil_rolling_mean_7,30,0.382044,6476,6294,0.3805528835011633,-0.0014911164988367087
+oil_rolling_mean,Fold 2,oil_rolling_mean_7,30,0.405838,2697,4444,0.3995755047220725,-0.006262495277927493
+oil_rolling_mean,Fold 3,oil_rolling_mean_7,30,0.394152,6902,4489,0.40221042359735476,0.008058423597354758
+oil_diff,Fold 1,oil_diff_7,30,0.382044,6476,5853,0.3854470098412426,0.003403009841242588
+oil_diff,Fold 2,oil_diff_7,30,0.405838,2697,2767,0.40916748302855593,0.0033294830285559573
+oil_diff,Fold 3,oil_diff_7,30,0.394152,6902,5443,0.3980815939143513,0.00392959391435127

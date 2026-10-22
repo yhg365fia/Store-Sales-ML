@@ -1,41 +1,188 @@
-"""Group Statistics F: store_nbr x dayofweek (past daily store totals).
-Run: python src/experiment_f.py
 """
+Selective Feature Ablation
+
+Baseline:
+Base23 + Lag16/21/28 + dayofyear + Payday2 = 29 features
+
+Experiments:
+1. remove is_promotion
+2. remove is_month_end
+3. remove is_15th
+4. remove state
+
+Baseline is NOT retrained.
+
+Run:
+python src/experiment_ablation.py
+"""
+
 import gc
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMRegressor, early_stopping, log_evaluation
+
+from lightgbm import (
+    LGBMRegressor,
+    early_stopping,
+    log_evaluation,
+)
 
 from main import main
-from feature_engineering import LAGS, LAG_FEATURES, add_lag_features
+
+from feature_engineering import (
+    LAGS,
+    LAG_FEATURES,
+    add_lag_features,
+)
+
+
+# =========================================================
+# 1. Base Features
+# =========================================================
 
 BASE_FEATURES = [
-    "store_nbr", "family", "city", "state", "type", "cluster",
-    "year", "month", "day", "dayofweek", "is_weekend",
-    "onpromotion", "is_promotion",
-    "holiday_count", "event_christmas", "event_new_year", "event_carnival",
-    "event_mothers_day", "event_independence_day", "event_city_foundation",
-    "event_good_friday", "event_labor_day", "event_other",
+    # Store / Product
+    "store_nbr",
+    "family",
+    "city",
+    "state",
+    "type",
+    "cluster",
+
+    # Calendar
+    "year",
+    "month",
+    "day",
+    "dayofweek",
+    "is_weekend",
+
+    # Promotion
+    "onpromotion",
+    "is_promotion",
+
+    # Holiday
+    "holiday_count",
+    "event_christmas",
+    "event_new_year",
+    "event_carnival",
+    "event_mothers_day",
+    "event_independence_day",
+    "event_city_foundation",
+    "event_good_friday",
+    "event_labor_day",
+    "event_other",
 ]
-PAYDAY_FEATURES = ["is_15th", "is_month_end"]
-CATEGORICAL_FEATURES = ["store_nbr", "family", "city", "state", "type", "cluster"]
-BASELINE_FEATURES = BASE_FEATURES + list(LAG_FEATURES) + ["dayofyear"] + PAYDAY_FEATURES
-F_FEATURE = "store_dayofweek_mean"
-EXPERIMENT_FEATURES = BASELINE_FEATURES + [F_FEATURE]
+
+
+PAYDAY_FEATURES = [
+    "is_15th",
+    "is_month_end",
+]
+
+
+CATEGORICAL_FEATURES = [
+    "store_nbr",
+    "family",
+    "city",
+    "state",
+    "type",
+    "cluster",
+]
+
+
+# =========================================================
+# 2. Current Baseline
+# =========================================================
+
+BASELINE_FEATURES = (
+    BASE_FEATURES
+    + list(LAG_FEATURES)
+    + ["dayofyear"]
+    + PAYDAY_FEATURES
+)
+
+
+# =========================================================
+# 3. Ablation Experiments
+# =========================================================
+
+ABLATION_EXPERIMENTS = {
+    "remove_is_promotion": "is_promotion",
+    "remove_is_month_end": "is_month_end",
+    "remove_is_15th": "is_15th",
+    "remove_state": "state",
+}
+
+
+# 각 실험은 Baseline 29개에서
+# 정확히 1개만 제거
+EXPERIMENT_FEATURES = {
+    experiment_name: [
+        feature
+        for feature in BASELINE_FEATURES
+        if feature != removed_feature
+    ]
+    for experiment_name, removed_feature
+    in ABLATION_EXPERIMENTS.items()
+}
+
+
+# =========================================================
+# 4. Model Settings
+# =========================================================
 
 N_ESTIMATORS = 8000
+
 EARLY_STOPPING_ROUNDS = 150
+
 FORECAST_HORIZON = 16
-RETRAIN_BASELINE = False  # True: baseline도 3-fold 재학습(총 6모델)
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "results" / "group_stats_F"
+
+
+# Baseline은 재학습하지 않음
+RETRAIN_BASELINE = False
+
+
+OUTPUT_DIR = (
+    Path(__file__)
+    .resolve()
+    .parent
+    .parent
+    / "results"
+    / "ablation_4"
+)
+
+
+# =========================================================
+# 5. Folds
+# =========================================================
 
 FOLDS = [
-    {"fold": "Fold 1", "train_end": "2017-06-28", "valid_start": "2017-06-29", "valid_end": "2017-07-14"},
-    {"fold": "Fold 2", "train_end": "2017-07-14", "valid_start": "2017-07-15", "valid_end": "2017-07-30"},
-    {"fold": "Fold 3", "train_end": "2017-07-30", "valid_start": "2017-07-31", "valid_end": "2017-08-15"},
+    {
+        "fold": "Fold 1",
+        "train_end": "2017-06-28",
+        "valid_start": "2017-06-29",
+        "valid_end": "2017-07-14",
+    },
+    {
+        "fold": "Fold 2",
+        "train_end": "2017-07-14",
+        "valid_start": "2017-07-15",
+        "valid_end": "2017-07-30",
+    },
+    {
+        "fold": "Fold 3",
+        "train_end": "2017-07-30",
+        "valid_start": "2017-07-31",
+        "valid_end": "2017-08-15",
+    },
 ]
+
+
+# =========================================================
+# 6. Stored Baseline
+# =========================================================
+
 REFERENCE_BASELINE = {
     "Fold 1": 0.382044,
     "Fold 2": 0.405838,
@@ -43,246 +190,1813 @@ REFERENCE_BASELINE = {
 }
 
 
+REFERENCE_BASELINE_BEST_ITERATION = {
+    "Fold 1": 6476,
+    "Fold 2": 2697,
+    "Fold 3": 6902,
+}
+
+
+# =========================================================
+# 7. Configuration QC
+# =========================================================
+
+def validate_configuration():
+
+    if tuple(LAGS) != (
+        16,
+        21,
+        28,
+    ):
+        raise ValueError(
+            "LAGS는 (16, 21, 28)이어야 합니다."
+        )
+
+
+    if len(BASE_FEATURES) != 23:
+        raise ValueError(
+            f"BASE_FEATURES는 23개여야 합니다. "
+            f"현재: {len(BASE_FEATURES)}"
+        )
+
+
+    if len(BASELINE_FEATURES) != 29:
+        raise ValueError(
+            f"Baseline은 29개여야 합니다. "
+            f"현재: {len(BASELINE_FEATURES)}"
+        )
+
+
+    if len(
+        set(BASELINE_FEATURES)
+    ) != len(
+        BASELINE_FEATURES
+    ):
+        raise ValueError(
+            "Baseline Feature에 중복이 있습니다."
+        )
+
+
+    for (
+        experiment_name,
+        removed_feature,
+    ) in ABLATION_EXPERIMENTS.items():
+
+        features = (
+            EXPERIMENT_FEATURES[
+                experiment_name
+            ]
+        )
+
+        if len(features) != 28:
+            raise ValueError(
+                f"{experiment_name}: "
+                "28개 피처여야 합니다."
+            )
+
+
+        if removed_feature in features:
+            raise ValueError(
+                f"{experiment_name}: "
+                f"{removed_feature}가 "
+                "실제로 제거되지 않았습니다."
+            )
+
+
+        difference = (
+            set(BASELINE_FEATURES)
+            - set(features)
+        )
+
+        if difference != {
+            removed_feature
+        }:
+            raise ValueError(
+                f"{experiment_name}: "
+                "한 개 피처만 제거되어야 합니다.\n"
+                f"차이: {difference}"
+            )
+
+
+# =========================================================
+# 8. Feature Preparation
+# =========================================================
+
 def prepare_features(df):
-    if tuple(LAGS) != (16, 21, 28):
-        raise ValueError("LAGS는 (16, 21, 28)이어야 합니다.")
-    if len(BASELINE_FEATURES) != 29 or len(set(EXPERIMENT_FEATURES)) != 30:
-        raise ValueError("피처 구성은 Baseline 29개 + F 1개여야 합니다.")
+
+    validate_configuration()
 
     df = df.copy()
-    required = ["date", "sales", *BASE_FEATURES, "dayofyear", *PAYDAY_FEATURES]
-    missing = sorted(set(required) - set(df.columns))
-    if missing:
-        raise ValueError(f"필수 컬럼 누락: {missing}")
 
-    df["date"] = pd.to_datetime(df["date"])
-    keys = ["store_nbr", "family"]
-    if df[["date", *keys]].isna().any().any():
-        raise ValueError("날짜/매장/상품군에 결측치가 있습니다.")
-    if df.duplicated(["date", *keys]).any():
-        raise ValueError("date × store_nbr × family 중복이 있습니다.")
-    if not np.isfinite(df["sales"].to_numpy(dtype=float)).all() or (df["sales"] < 0).any():
-        raise ValueError("sales에 음수·결측·무한대가 있습니다.")
-    if not df["dayofweek"].eq(df["date"].dt.dayofweek).all():
-        raise ValueError("요일 피처가 실제 날짜와 다릅니다.")
-    if not df["dayofyear"].eq(df["date"].dt.dayofyear).all():
-        raise ValueError("dayofyear 피처가 실제 날짜와 다릅니다.")
+    df["date"] = pd.to_datetime(
+        df["date"]
+    )
 
-    df = df.sort_values([*keys, "date"]).reset_index(drop=True)
-    diffs = df.groupby(keys, observed=True)["date"].diff()
-    if not diffs.dropna().eq(pd.Timedelta(days=1)).all():
-        raise ValueError("매장 × 상품군별 날짜가 연속되지 않습니다.")
-    df = add_lag_features(df, lags=LAGS)
-    df["sales_log"] = np.log1p(df["sales"])
 
-    positions = df.groupby(keys, observed=True).cumcount()
+    required_columns = [
+        "date",
+        "sales",
+        *BASE_FEATURES,
+        "dayofyear",
+        *PAYDAY_FEATURES,
+    ]
+
+
+    missing_columns = sorted(
+        set(required_columns)
+        - set(df.columns)
+    )
+
+
+    if missing_columns:
+        raise ValueError(
+            "필수 컬럼 누락:\n"
+            f"{missing_columns}"
+        )
+
+
+    keys = [
+        "store_nbr",
+        "family",
+    ]
+
+
+    # -----------------------------------------------------
+    # Key QC
+    # -----------------------------------------------------
+
+    if df[
+        [
+            "date",
+            *keys,
+        ]
+    ].isna().any().any():
+
+        raise ValueError(
+            "날짜 / 매장 / 상품군에 "
+            "결측치가 있습니다."
+        )
+
+
+    if df.duplicated(
+        [
+            "date",
+            *keys,
+        ]
+    ).any():
+
+        raise ValueError(
+            "date × store_nbr × family "
+            "중복이 있습니다."
+        )
+
+
+    # -----------------------------------------------------
+    # Sales QC
+    # -----------------------------------------------------
+
+    sales_array = df[
+        "sales"
+    ].to_numpy(
+        dtype=float
+    )
+
+
+    if not np.isfinite(
+        sales_array
+    ).all():
+
+        raise ValueError(
+            "sales에 결측치 또는 "
+            "무한대가 있습니다."
+        )
+
+
+    if (
+        sales_array < 0
+    ).any():
+
+        raise ValueError(
+            "sales에 음수가 있습니다."
+        )
+
+
+    # -----------------------------------------------------
+    # Calendar QC
+    # -----------------------------------------------------
+
+    if not df[
+        "dayofweek"
+    ].eq(
+        df["date"].dt.dayofweek
+    ).all():
+
+        raise ValueError(
+            "dayofweek가 실제 날짜와 다릅니다."
+        )
+
+
+    if not df[
+        "dayofyear"
+    ].eq(
+        df["date"].dt.dayofyear
+    ).all():
+
+        raise ValueError(
+            "dayofyear가 실제 날짜와 다릅니다."
+        )
+
+
+    expected_weekend = (
+        df["date"]
+        .dt.dayofweek
+        .ge(5)
+        .astype(int)
+    )
+
+
+    if not df[
+        "is_weekend"
+    ].eq(
+        expected_weekend
+    ).all():
+
+        raise ValueError(
+            "is_weekend 계산이 잘못됐습니다."
+        )
+
+
+    # -----------------------------------------------------
+    # Promotion QC
+    # -----------------------------------------------------
+
+    expected_promotion = (
+        df["onpromotion"] > 0
+    ).astype(int)
+
+
+    if not df[
+        "is_promotion"
+    ].eq(
+        expected_promotion
+    ).all():
+
+        raise ValueError(
+            "is_promotion 계산이 "
+            "onpromotion과 일치하지 않습니다."
+        )
+
+
+    # -----------------------------------------------------
+    # Payday QC
+    # -----------------------------------------------------
+
+    expected_15th = (
+        df["date"].dt.day
+        == 15
+    ).astype(int)
+
+
+    if not df[
+        "is_15th"
+    ].eq(
+        expected_15th
+    ).all():
+
+        raise ValueError(
+            "is_15th 계산이 잘못됐습니다."
+        )
+
+
+    expected_month_end = (
+        df["date"]
+        .dt.is_month_end
+        .astype(int)
+    )
+
+
+    if not df[
+        "is_month_end"
+    ].eq(
+        expected_month_end
+    ).all():
+
+        raise ValueError(
+            "is_month_end 계산이 "
+            "잘못됐습니다."
+        )
+
+
+    # -----------------------------------------------------
+    # Sort
+    # -----------------------------------------------------
+
+    df = (
+        df
+        .sort_values(
+            [
+                *keys,
+                "date",
+            ]
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
+
+    # -----------------------------------------------------
+    # Daily continuity QC
+    # -----------------------------------------------------
+
+    date_diff = (
+        df
+        .groupby(
+            keys,
+            observed=True,
+        )["date"]
+        .diff()
+    )
+
+
+    if not (
+        date_diff
+        .dropna()
+        .eq(
+            pd.Timedelta(
+                days=1
+            )
+        )
+        .all()
+    ):
+
+        raise ValueError(
+            "매장 × 상품군별 날짜가 "
+            "연속되지 않습니다."
+        )
+
+
+    # -----------------------------------------------------
+    # Lag
+    # -----------------------------------------------------
+
+    df = add_lag_features(
+        df,
+        lags=LAGS,
+    )
+
+
+    # -----------------------------------------------------
+    # Target
+    # -----------------------------------------------------
+
+    df["sales_log"] = np.log1p(
+        df["sales"]
+    )
+
+
+    # -----------------------------------------------------
+    # Lag missing QC
+    # -----------------------------------------------------
+
+    positions = (
+        df
+        .groupby(
+            keys,
+            observed=True,
+        )
+        .cumcount()
+    )
+
+
     for lag in LAGS:
-        if not df[f"sales_lag_{lag}"].isna().eq(positions < lag).all():
-            raise ValueError(f"sales_lag_{lag} 초기 결측 위치가 잘못됐습니다.")
+
+        feature = (
+            f"sales_lag_{lag}"
+        )
+
+        expected_missing = (
+            positions < lag
+        )
+
+        actual_missing = (
+            df[
+                feature
+            ].isna()
+        )
+
+
+        if not actual_missing.eq(
+            expected_missing
+        ).all():
+
+            raise ValueError(
+                f"{feature} 초기 결측 위치가 "
+                "예상과 다릅니다."
+            )
+
+
     return df
 
 
-def make_fold(df, spec):
-    train_end = pd.Timestamp(spec["train_end"])
-    valid_start = pd.Timestamp(spec["valid_start"])
-    valid_end = pd.Timestamp(spec["valid_end"])
-    if valid_start != train_end + pd.Timedelta(days=1):
-        raise ValueError("Fold 경계가 연속되지 않습니다.")
-    if (valid_end - valid_start).days + 1 != FORECAST_HORIZON:
-        raise ValueError("Validation은 16일이어야 합니다.")
-    if min(LAGS) < FORECAST_HORIZON:
-        raise ValueError("16일 예측에서 Lag가 16 미만입니다.")
+# =========================================================
+# 9. Fold Split
+# =========================================================
 
-    train_df = df[df["date"] <= train_end].copy()
-    valid_df = df[df["date"].between(valid_start, valid_end)].copy()
-    if train_df.empty or valid_df.empty or train_df["date"].max() != train_end:
-        raise ValueError("비어 있는 Fold 또는 잘못된 종료일입니다.")
-    counts = valid_df.groupby(["store_nbr", "family"], observed=True).size()
-    if not counts.eq(FORECAST_HORIZON).all():
-        raise ValueError("검증 그룹별 16일 데이터가 모두 있어야 합니다.")
-    return train_df, valid_df
+def make_fold(
+    df,
+    spec,
+):
 
-
-def add_store_dayofweek_mean(train_df, valid_df):
-    """해당 매장의 '하루 전체 상품군 sales 총합'의 과거 동일 요일 평균.
-
-    Train: 같은 매장의 당일 sales를 집계하되, 집계 결과에서 현재 날짜를 빼고 계산.
-    Valid: 오직 Fold Train 종료일까지 같은 매장·요일의 일별 총합 평균.
-    """
-    train_df = train_df.copy()
-    valid_df = valid_df.copy()
-    daily = (
-        train_df.groupby(["date", "store_nbr"], as_index=False, observed=True)
-        .agg(daily_store_sales=("sales", "sum"))
+    train_end = pd.Timestamp(
+        spec["train_end"]
     )
-    daily["dayofweek"] = daily["date"].dt.dayofweek
-    daily = daily.sort_values(["store_nbr", "dayofweek", "date"]).reset_index(drop=True)
-    group = daily.groupby(["store_nbr", "dayofweek"], observed=True)
 
-    # cumsum에서 '오늘 판매량'을 제거. 첫 등장 요일은 NaN.
-    previous_count = group.cumcount()
-    previous_sum = group["daily_store_sales"].cumsum() - daily["daily_store_sales"]
-    daily[F_FEATURE] = previous_sum / previous_count.replace(0, np.nan)
-
-    # 전체 Fold Train의 '하루 매장 총합'을 요일별로 평균.
-    # Validation 날짜의 sales는 전혀 참조하지 않음.
-    valid_mapping = (
-        daily.groupby(["store_nbr", "dayofweek"], observed=True, as_index=False)
-        .agg(**{F_FEATURE: ("daily_store_sales", "mean")})
+    valid_start = pd.Timestamp(
+        spec["valid_start"]
     )
-    train_df = train_df.merge(
-        daily[["date", "store_nbr", F_FEATURE]],
-        on=["date", "store_nbr"], how="left", sort=False, validate="many_to_one"
+
+    valid_end = pd.Timestamp(
+        spec["valid_end"]
     )
-    valid_df = valid_df.merge(
-        valid_mapping,
-        on=["store_nbr", "dayofweek"], how="left", sort=False, validate="many_to_one"
+
+
+    if (
+        valid_start
+        != train_end
+        + pd.Timedelta(
+            days=1
+        )
+    ):
+
+        raise ValueError(
+            "Fold 경계가 연속되지 않습니다."
+        )
+
+
+    horizon = (
+        valid_end
+        - valid_start
+    ).days + 1
+
+
+    if horizon != FORECAST_HORIZON:
+
+        raise ValueError(
+            "Validation은 16일이어야 합니다."
+        )
+
+
+    if min(
+        LAGS
+    ) < FORECAST_HORIZON:
+
+        raise ValueError(
+            "16일 예측에서 "
+            "Lag가 16 미만입니다."
+        )
+
+
+    train_df = df.loc[
+        df["date"] <= train_end
+    ].copy()
+
+
+    valid_df = df.loc[
+        df["date"].between(
+            valid_start,
+            valid_end,
+        )
+    ].copy()
+
+
+    if (
+        train_df.empty
+        or valid_df.empty
+    ):
+
+        raise ValueError(
+            "Train 또는 Validation이 비었습니다."
+        )
+
+
+    if (
+        train_df["date"].max()
+        != train_end
+    ):
+
+        raise ValueError(
+            "Train 종료일이 Fold 설정과 다릅니다."
+        )
+
+
+    valid_counts = (
+        valid_df
+        .groupby(
+            [
+                "store_nbr",
+                "family",
+            ],
+            observed=True,
+        )
+        .size()
     )
-    if not np.isfinite(train_df[F_FEATURE].dropna()).all():
-        raise ValueError("Train F 피처에 무한대가 있습니다.")
-    if valid_df[F_FEATURE].isna().any() or not np.isfinite(valid_df[F_FEATURE]).all():
-        raise ValueError("Validation F 피처에 결측치/무한대가 있습니다.")
-    if valid_df.groupby(["store_nbr", "dayofweek"], observed=True)[F_FEATURE].nunique().gt(1).any():
-        raise ValueError("Validation 요일별 평균이 16일 구간 내에서 변했습니다.")
-    return train_df, valid_df
 
 
-def model_inputs(train_df, valid_df, features):
-    X_train = train_df[features].copy()
-    X_valid = valid_df[features].copy()
-    for col in CATEGORICAL_FEATURES:
-        categories = pd.Index(train_df[col].dropna().unique())
-        X_train[col] = pd.Categorical(X_train[col], categories=categories)
-        X_valid[col] = pd.Categorical(X_valid[col], categories=categories)
-    allowed_na = set(LAG_FEATURES)
-    if F_FEATURE in features:
-        allowed_na.add(F_FEATURE)
-    nonnullable = [f for f in features if f not in allowed_na]
-    if X_train[nonnullable].isna().any().any() or X_valid[nonnullable].isna().any().any():
-        raise ValueError("Lag/F 초기 결측 이외의 결측치가 있습니다.")
-    if X_valid[list(LAG_FEATURES)].isna().any().any():
-        raise ValueError("Validation Lag가 결측입니다.")
-    return X_train, X_valid
+    if not valid_counts.eq(
+        FORECAST_HORIZON
+    ).all():
 
+        raise ValueError(
+            "Validation의 각 시계열에 "
+            "16일 데이터가 있어야 합니다."
+        )
+
+
+    return (
+        train_df,
+        valid_df,
+    )
+
+
+# =========================================================
+# 10. Model Input
+# =========================================================
+
+def model_inputs(
+    train_df,
+    valid_df,
+    features,
+):
+
+    X_train = train_df[
+        features
+    ].copy()
+
+    X_valid = valid_df[
+        features
+    ].copy()
+
+
+    # state 제거 실험도 있으므로
+    # 실제 사용 Feature에 존재하는
+    # categorical만 처리
+    active_categorical_features = [
+        feature
+        for feature in CATEGORICAL_FEATURES
+        if feature in features
+    ]
+
+
+    for column in (
+        active_categorical_features
+    ):
+
+        categories = pd.Index(
+            train_df[
+                column
+            ]
+            .dropna()
+            .unique()
+        )
+
+
+        X_train[
+            column
+        ] = pd.Categorical(
+            X_train[
+                column
+            ],
+            categories=categories,
+        )
+
+
+        X_valid[
+            column
+        ] = pd.Categorical(
+            X_valid[
+                column
+            ],
+            categories=categories,
+        )
+
+
+    # Train에서는 시계열 시작 부분의
+    # Lag 결측만 허용
+    allowed_na = set(
+        LAG_FEATURES
+    )
+
+
+    nonnullable = [
+        feature
+        for feature in features
+        if feature not in allowed_na
+    ]
+
+
+    if (
+        X_train[
+            nonnullable
+        ]
+        .isna()
+        .any()
+        .any()
+    ):
+
+        raise ValueError(
+            "Train의 Lag 외 피처에 "
+            "결측치가 있습니다."
+        )
+
+
+    if (
+        X_valid[
+            nonnullable
+        ]
+        .isna()
+        .any()
+        .any()
+    ):
+
+        raise ValueError(
+            "Validation의 Lag 외 피처에 "
+            "결측치가 있습니다."
+        )
+
+
+    active_lag_features = [
+        feature
+        for feature in LAG_FEATURES
+        if feature in features
+    ]
+
+
+    if (
+        X_valid[
+            active_lag_features
+        ]
+        .isna()
+        .any()
+        .any()
+    ):
+
+        raise ValueError(
+            "Validation Lag에 "
+            "결측치가 있습니다."
+        )
+
+
+    return (
+        X_train,
+        X_valid,
+        active_categorical_features,
+    )
+
+
+# =========================================================
+# 11. LightGBM
+# =========================================================
 
 def build_model():
+
     return LGBMRegressor(
-        boosting_type="gbdt", objective="regression", learning_rate=0.05,
-        n_estimators=N_ESTIMATORS, num_leaves=31, max_depth=-1,
-        min_child_samples=50, min_split_gain=0.0,
-        subsample=1.0, subsample_freq=0, colsample_bytree=1.0,
-        reg_alpha=0.0, reg_lambda=0.0, metric="rmse",
-        importance_type="split", random_state=42, n_jobs=-1, verbosity=-1,
+
+        boosting_type="gbdt",
+
+        objective="regression",
+
+        learning_rate=0.05,
+
+        n_estimators=N_ESTIMATORS,
+
+        num_leaves=31,
+
+        max_depth=-1,
+
+        min_child_samples=50,
+
+        min_split_gain=0.0,
+
+        subsample=1.0,
+
+        subsample_freq=0,
+
+        colsample_bytree=1.0,
+
+        reg_alpha=0.0,
+
+        reg_lambda=0.0,
+
+        metric="rmse",
+
+        importance_type="split",
+
+        random_state=42,
+
+        n_jobs=-1,
+
+        verbosity=-1,
     )
 
 
-def rmsle(y_true, prediction_log):
-    prediction_log = np.asarray(prediction_log, dtype=float)
-    if not np.isfinite(prediction_log).all():
-        raise ValueError("예측 결과에 결측치/무한대가 있습니다.")
-    prediction_log = np.maximum(prediction_log, 0)
-    return float(np.sqrt(np.mean((np.log1p(np.asarray(y_true)) - prediction_log) ** 2)))
+# =========================================================
+# 12. RMSLE
+# =========================================================
+
+def calculate_rmsle(
+    y_true,
+    prediction_log,
+):
+
+    y_true = np.asarray(
+        y_true,
+        dtype=float,
+    )
 
 
-def train_one(train_df, valid_df, features, importance=False):
-    X_train, X_valid = model_inputs(train_df, valid_df, features)
+    prediction_log = np.asarray(
+        prediction_log,
+        dtype=float,
+    )
+
+
+    if not np.isfinite(
+        prediction_log
+    ).all():
+
+        raise ValueError(
+            "예측 결과에 결측치 또는 "
+            "무한대가 있습니다."
+        )
+
+
+    prediction_log = np.maximum(
+        prediction_log,
+        0.0,
+    )
+
+
+    return float(
+
+        np.sqrt(
+
+            np.mean(
+
+                (
+                    np.log1p(
+                        y_true
+                    )
+                    - prediction_log
+                )
+                ** 2
+            )
+        )
+    )
+
+
+# =========================================================
+# 13. Train One Model
+# =========================================================
+
+def train_one(
+    train_df,
+    valid_df,
+    features,
+):
+
+    (
+        X_train,
+        X_valid,
+        active_categorical_features,
+    ) = model_inputs(
+        train_df,
+        valid_df,
+        features,
+    )
+
+
     model = build_model()
+
+
     model.fit(
-        X_train, train_df["sales_log"],
-        eval_set=[(X_valid, valid_df["sales_log"])],
+
+        X_train,
+
+        train_df[
+            "sales_log"
+        ],
+
+        eval_set=[
+            (
+                X_valid,
+
+                valid_df[
+                    "sales_log"
+                ],
+            )
+        ],
+
         eval_metric="rmse",
-        categorical_feature=CATEGORICAL_FEATURES,
-        callbacks=[early_stopping(EARLY_STOPPING_ROUNDS), log_evaluation(200)],
+
+        categorical_feature=(
+            active_categorical_features
+        ),
+
+        callbacks=[
+
+            early_stopping(
+                EARLY_STOPPING_ROUNDS,
+                verbose=True,
+            ),
+
+            log_evaluation(
+                200
+            ),
+        ],
     )
-    best = int(model.best_iteration_)
-    score = rmsle(valid_df["sales"].to_numpy(), model.predict(X_valid, num_iteration=best))
-    if importance:
-        booster = model.booster_
-        g = booster.feature_importance(importance_type="gain", iteration=best)
-        s = booster.feature_importance(importance_type="split", iteration=best)
-        importance_df = pd.DataFrame({"feature": booster.feature_name(), "gain": g, "split": s})
-        importance_df["gain_pct"] = importance_df["gain"] / max(importance_df["gain"].sum(), 1e-12) * 100
-        importance_df["split_pct"] = importance_df["split"] / max(importance_df["split"].sum(), 1e-12) * 100
-    else:
-        importance_df = None
-    del model, X_train, X_valid
-    gc.collect()
-    return best, score, importance_df
 
 
-def run_experiment():
-    raw_train, raw_test, holidays = main()
-    del raw_test, holidays
+    best_iteration = int(
+        model.best_iteration_
+    )
+
+
+    prediction_log = model.predict(
+        X_valid,
+        num_iteration=best_iteration,
+    )
+
+
+    score = calculate_rmsle(
+
+        y_true=valid_df[
+            "sales"
+        ].to_numpy(),
+
+        prediction_log=(
+            prediction_log
+        ),
+    )
+
+
+    # -----------------------------------------------------
+    # Importance
+    # -----------------------------------------------------
+
+    booster = model.booster_
+
+
+    gain = booster.feature_importance(
+        importance_type="gain",
+        iteration=best_iteration,
+    )
+
+
+    split = booster.feature_importance(
+        importance_type="split",
+        iteration=best_iteration,
+    )
+
+
+    importance_df = pd.DataFrame(
+        {
+            "feature":
+                booster.feature_name(),
+
+            "gain":
+                gain,
+
+            "split":
+                split,
+        }
+    )
+
+
+    gain_total = max(
+        importance_df[
+            "gain"
+        ].sum(),
+        1e-12,
+    )
+
+
+    split_total = max(
+        importance_df[
+            "split"
+        ].sum(),
+        1e-12,
+    )
+
+
+    importance_df[
+        "gain_pct"
+    ] = (
+        importance_df[
+            "gain"
+        ]
+        / gain_total
+        * 100
+    )
+
+
+    importance_df[
+        "split_pct"
+    ] = (
+        importance_df[
+            "split"
+        ]
+        / split_total
+        * 100
+    )
+
+
+    del model
+    del X_train
+    del X_valid
+    del prediction_log
+
     gc.collect()
-    df = prepare_features(raw_train)
-    del raw_train
-    gc.collect()
-    print("\nEXPERIMENT F: store_nbr × dayofweek")
-    print("F: 과거 동일 요일의 매장 하루 총판매량 평균")
-    print(f"Features: {len(BASELINE_FEATURES)} -> {len(EXPERIMENT_FEATURES)}")
-    print(f"n_estimators={N_ESTIMATORS}, early_stopping={EARLY_STOPPING_ROUNDS}")
-    print("Baseline retraining:", RETRAIN_BASELINE)
+
+
+    return (
+        best_iteration,
+        score,
+        importance_df,
+    )
+
+
+# =========================================================
+# 14. One Ablation Experiment
+# =========================================================
+
+def run_one_ablation(
+    df,
+    experiment_name,
+    removed_feature,
+):
+
+    features = (
+        EXPERIMENT_FEATURES[
+            experiment_name
+        ]
+    )
+
+
+    print(
+        "\n\n"
+        + "=" * 90
+    )
+
+    print(
+        experiment_name.upper()
+    )
+
+    print(
+        "=" * 90
+    )
+
+    print(
+        "Removed feature:",
+        removed_feature,
+    )
+
+    print(
+        "Baseline features:",
+        len(
+            BASELINE_FEATURES
+        )
+    )
+
+    print(
+        "Experiment features:",
+        len(
+            features
+        )
+    )
+
+    print(
+        "Baseline retraining:",
+        RETRAIN_BASELINE,
+    )
+
+
     results = []
+
     importances = []
+
+
     for spec in FOLDS:
-        print("\n" + "=" * 80)
-        print(spec["fold"])
-        print("=" * 80)
-        tr, va = make_fold(df, spec)
-        tr, va = add_store_dayofweek_mean(tr, va)
-        print("Train/Valid:", tr["date"].min().date(), tr["date"].max().date(),
-              " / ", va["date"].min().date(), va["date"].max().date())
-        print("F missing train/valid:", tr[F_FEATURE].isna().sum(), va[F_FEATURE].isna().sum())
 
-        if RETRAIN_BASELINE:
-            baseline_iter, baseline_score, _ = train_one(tr, va, BASELINE_FEATURES)
-        else:
-            baseline_iter = None
-            baseline_score = REFERENCE_BASELINE[spec["fold"]]
+        fold_name = (
+            spec[
+                "fold"
+            ]
+        )
 
-        iteration, score, imp = train_one(tr, va, EXPERIMENT_FEATURES, importance=True)
-        imp.insert(0, "fold", spec["fold"])
-        importances.append(imp)
-        results.append({
-            "fold": spec["fold"], "baseline_rmsle": baseline_score,
-            "F_rmsle": score, "delta_F_minus_baseline": score - baseline_score,
-            "baseline_best_iteration": baseline_iter, "F_best_iteration": iteration,
-        })
-        print(f"Baseline={baseline_score:.6f} | F={score:.6f} | Δ={score-baseline_score:+.6f}")
-        del tr, va, imp
+
+        print(
+            "\n"
+            + "-" * 80
+        )
+
+        print(
+            f"{experiment_name} | "
+            f"{fold_name}"
+        )
+
+        print(
+            "-" * 80
+        )
+
+
+        train_df, valid_df = (
+            make_fold(
+                df,
+                spec,
+            )
+        )
+
+
+        # -----------------------------------------------
+        # Stored Baseline
+        # -----------------------------------------------
+
+        baseline_score = (
+            REFERENCE_BASELINE[
+                fold_name
+            ]
+        )
+
+
+        baseline_iteration = (
+            REFERENCE_BASELINE_BEST_ITERATION[
+                fold_name
+            ]
+        )
+
+
+        print(
+            f"Baseline RMSLE: "
+            f"{baseline_score:.6f}"
+        )
+
+        print(
+            f"Baseline Best Iteration: "
+            f"{baseline_iteration}"
+        )
+
+        print(
+            "Baseline training: SKIPPED"
+        )
+
+
+        # -----------------------------------------------
+        # Ablation Model
+        # -----------------------------------------------
+
+        (
+            best_iteration,
+            score,
+            importance_df,
+        ) = train_one(
+
+            train_df=train_df,
+
+            valid_df=valid_df,
+
+            features=features,
+        )
+
+
+        delta = (
+            score
+            - baseline_score
+        )
+
+
+        print(
+            f"\nAblation RMSLE: "
+            f"{score:.6f}"
+        )
+
+        print(
+            f"Ablation Best Iteration: "
+            f"{best_iteration}"
+        )
+
+        print(
+            f"Delta: "
+            f"{delta:+.6f}"
+        )
+
+
+        importance_df.insert(
+            0,
+            "fold",
+            fold_name,
+        )
+
+
+        importance_df.insert(
+            0,
+            "experiment",
+            experiment_name,
+        )
+
+
+        importances.append(
+            importance_df
+        )
+
+
+        results.append(
+            {
+                "experiment":
+                    experiment_name,
+
+                "removed_feature":
+                    removed_feature,
+
+                "fold":
+                    fold_name,
+
+                "baseline_rmsle":
+                    baseline_score,
+
+                "baseline_best_iteration":
+                    baseline_iteration,
+
+                "ablation_rmsle":
+                    score,
+
+                "ablation_best_iteration":
+                    best_iteration,
+
+                "delta":
+                    delta,
+            }
+        )
+
+
+        del train_df
+        del valid_df
+        del importance_df
+
         gc.collect()
 
-    fold_results = pd.DataFrame(results)
-    all_importances = pd.concat(importances, ignore_index=True)
-    mean_importance = (
-        all_importances.groupby("feature", as_index=False)
-        .agg(mean_gain_pct=("gain_pct", "mean"), mean_split_pct=("split_pct", "mean"),
-             mean_gain=("gain", "mean"), mean_split=("split", "mean"))
-        .sort_values("mean_gain_pct", ascending=False)
-        .reset_index(drop=True)
+
+    fold_results = pd.DataFrame(
+        results
     )
-    mean_importance.insert(0, "gain_rank", np.arange(1, len(mean_importance)+1))
-    mean_importance["split_rank"] = mean_importance["mean_split_pct"].rank(ascending=False, method="min").astype(int)
-    print("\n===== 3-FOLD RESULT =====")
-    print(fold_results.to_string(index=False, float_format=lambda x: f"{x:.6f}"))
-    print(f"Average Baseline: {fold_results['baseline_rmsle'].mean():.6f}")
-    print(f"Average F:        {fold_results['F_rmsle'].mean():.6f}")
-    print(f"Average delta:    {fold_results['delta_F_minus_baseline'].mean():+.6f}")
-    print(f"Improved folds:   {(fold_results['delta_F_minus_baseline'] < 0).sum()}/3")
-    print("\n===== FEATURE IMPORTANCE (3-FOLD AVERAGE) =====")
-    print(mean_importance.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
-    print("\nF row:")
-    print(mean_importance.loc[mean_importance["feature"].eq(F_FEATURE)].to_string(index=False))
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    fold_results.to_csv(OUTPUT_DIR / "F_fold_results.csv", index=False, encoding="utf-8-sig")
-    mean_importance.to_csv(OUTPUT_DIR / "F_mean_importance.csv", index=False, encoding="utf-8-sig")
-    all_importances.to_csv(OUTPUT_DIR / "F_per_fold_importance.csv", index=False, encoding="utf-8-sig")
-    print("\nSaved:", OUTPUT_DIR)
-    if not RETRAIN_BASELINE:
-        print("주의: Baseline은 과거 동일 설정의 기록을 비교에 사용했습니다. 파이프라인이 바뀌었다면 RETRAIN_BASELINE=True로 실행하세요.")
-    return fold_results, mean_importance, all_importances
 
+    all_importance = pd.concat(
+        importances,
+        ignore_index=True,
+    )
+
+
+    mean_importance = (
+
+        all_importance
+
+        .groupby(
+            "feature",
+            as_index=False,
+        )
+
+        .agg(
+            mean_gain_pct=(
+                "gain_pct",
+                "mean",
+            ),
+
+            mean_split_pct=(
+                "split_pct",
+                "mean",
+            ),
+
+            mean_gain=(
+                "gain",
+                "mean",
+            ),
+
+            mean_split=(
+                "split",
+                "mean",
+            ),
+        )
+
+        .sort_values(
+            "mean_gain_pct",
+            ascending=False,
+        )
+
+        .reset_index(
+            drop=True
+        )
+    )
+
+
+    mean_importance.insert(
+        0,
+        "gain_rank",
+        np.arange(
+            1,
+            len(
+                mean_importance
+            ) + 1,
+        ),
+    )
+
+
+    mean_importance[
+        "split_rank"
+    ] = (
+        mean_importance[
+            "mean_split_pct"
+        ]
+        .rank(
+            ascending=False,
+            method="min",
+        )
+        .astype(int)
+    )
+
+
+    # -----------------------------------------------------
+    # Summary
+    # -----------------------------------------------------
+
+    baseline_mean = (
+        fold_results[
+            "baseline_rmsle"
+        ].mean()
+    )
+
+
+    experiment_mean = (
+        fold_results[
+            "ablation_rmsle"
+        ].mean()
+    )
+
+
+    experiment_std = (
+        fold_results[
+            "ablation_rmsle"
+        ].std()
+    )
+
+
+    mean_delta = (
+        experiment_mean
+        - baseline_mean
+    )
+
+
+    improved_folds = int(
+        (
+            fold_results[
+                "delta"
+            ] < 0
+        ).sum()
+    )
+
+
+    print(
+        "\n"
+        + "=" * 80
+    )
+
+    print(
+        f"{experiment_name} RESULT"
+    )
+
+    print(
+        "=" * 80
+    )
+
+
+    print(
+
+        fold_results[
+            [
+                "fold",
+                "baseline_rmsle",
+                "ablation_rmsle",
+                "delta",
+                "ablation_best_iteration",
+            ]
+        ]
+
+        .to_string(
+
+            index=False,
+
+            float_format=(
+                lambda x:
+                f"{x:.6f}"
+            ),
+        )
+    )
+
+
+    print(
+        f"\nBaseline mean : "
+        f"{baseline_mean:.6f}"
+    )
+
+    print(
+        f"Ablation mean : "
+        f"{experiment_mean:.6f}"
+    )
+
+    print(
+        f"Std           : "
+        f"{experiment_std:.6f}"
+    )
+
+    print(
+        f"Mean delta    : "
+        f"{mean_delta:+.6f}"
+    )
+
+    print(
+        f"Improved folds: "
+        f"{improved_folds}/3"
+    )
+
+
+    # -----------------------------------------------------
+    # Decision
+    # -----------------------------------------------------
+
+    if mean_delta < 0:
+
+        decision = (
+            "IMPROVED"
+        )
+
+    elif mean_delta > 0:
+
+        decision = (
+            "WORSE"
+        )
+
+    else:
+
+        decision = (
+            "SAME"
+        )
+
+
+    print(
+        "Decision:",
+        decision,
+    )
+
+
+    return (
+        fold_results,
+        mean_importance,
+        all_importance,
+    )
+
+
+# =========================================================
+# 15. Run All Four Ablations
+# =========================================================
+
+def run_experiments():
+
+    validate_configuration()
+
+
+    # -----------------------------------------------------
+    # Existing pipeline
+    # -----------------------------------------------------
+
+    raw_train, raw_test, holidays = (
+        main()
+    )
+
+
+    del raw_test
+    del holidays
+
+    gc.collect()
+
+
+    # -----------------------------------------------------
+    # Lag
+    # -----------------------------------------------------
+
+    df = prepare_features(
+        raw_train
+    )
+
+
+    del raw_train
+
+    gc.collect()
+
+
+    print(
+        "\n"
+        + "=" * 90
+    )
+
+    print(
+        "SELECTIVE ABLATION EXPERIMENT"
+    )
+
+    print(
+        "=" * 90
+    )
+
+    print(
+        "Baseline:",
+        "29 features"
+    )
+
+    print(
+        "Baseline retraining:",
+        RETRAIN_BASELINE
+    )
+
+    print(
+        "n_estimators:",
+        N_ESTIMATORS
+    )
+
+    print(
+        "Early stopping:",
+        EARLY_STOPPING_ROUNDS
+    )
+
+    print(
+        "\nStored baseline:"
+    )
+
+    for (
+        fold_name,
+        score,
+    ) in REFERENCE_BASELINE.items():
+
+        print(
+            fold_name,
+            "=",
+            f"{score:.6f}",
+        )
+
+
+    all_fold_results = []
+
+    all_mean_importances = []
+
+    all_per_fold_importances = []
+
+
+    # =====================================================
+    # 4 Experiments
+    # =====================================================
+
+    for (
+        experiment_name,
+        removed_feature,
+    ) in ABLATION_EXPERIMENTS.items():
+
+        (
+            fold_results,
+            mean_importance,
+            per_fold_importance,
+        ) = run_one_ablation(
+
+            df=df,
+
+            experiment_name=(
+                experiment_name
+            ),
+
+            removed_feature=(
+                removed_feature
+            ),
+        )
+
+
+        mean_importance.insert(
+            0,
+            "removed_feature",
+            removed_feature,
+        )
+
+
+        mean_importance.insert(
+            0,
+            "experiment",
+            experiment_name,
+        )
+
+
+        all_fold_results.append(
+            fold_results
+        )
+
+        all_mean_importances.append(
+            mean_importance
+        )
+
+        all_per_fold_importances.append(
+            per_fold_importance
+        )
+
+
+    # =====================================================
+    # Combine
+    # =====================================================
+
+    all_fold_results = pd.concat(
+        all_fold_results,
+        ignore_index=True,
+    )
+
+
+    all_mean_importances = pd.concat(
+        all_mean_importances,
+        ignore_index=True,
+    )
+
+
+    all_per_fold_importances = pd.concat(
+        all_per_fold_importances,
+        ignore_index=True,
+    )
+
+
+    # =====================================================
+    # Final Summary
+    # =====================================================
+
+    experiment_summary = (
+
+        all_fold_results
+
+        .groupby(
+            [
+                "experiment",
+                "removed_feature",
+            ],
+            as_index=False,
+        )
+
+        .agg(
+
+            mean_rmsle=(
+                "ablation_rmsle",
+                "mean",
+            ),
+
+            std_rmsle=(
+                "ablation_rmsle",
+                "std",
+            ),
+
+            mean_delta=(
+                "delta",
+                "mean",
+            ),
+
+            improved_folds=(
+                "delta",
+                lambda x:
+                int(
+                    (
+                        x < 0
+                    ).sum()
+                ),
+            ),
+
+            mean_best_iteration=(
+                "ablation_best_iteration",
+                "mean",
+            ),
+        )
+    )
+
+
+    baseline_mean = np.mean(
+        list(
+            REFERENCE_BASELINE.values()
+        )
+    )
+
+
+    experiment_summary.insert(
+        2,
+        "baseline_mean_rmsle",
+        baseline_mean,
+    )
+
+
+    experiment_summary[
+        "decision"
+    ] = np.select(
+
+        [
+            experiment_summary[
+                "mean_delta"
+            ] < 0,
+
+            experiment_summary[
+                "mean_delta"
+            ] > 0,
+        ],
+
+        [
+            "IMPROVED",
+            "WORSE",
+        ],
+
+        default="SAME",
+    )
+
+
+    experiment_summary = (
+        experiment_summary
+        .sort_values(
+            "mean_rmsle"
+        )
+        .reset_index(
+            drop=True
+        )
+    )
+
+
+    print(
+        "\n\n"
+        + "=" * 100
+    )
+
+    print(
+        "FINAL ABLATION COMPARISON"
+    )
+
+    print(
+        "=" * 100
+    )
+
+
+    print(
+
+        experiment_summary.to_string(
+
+            index=False,
+
+            formatters={
+
+                "baseline_mean_rmsle":
+                    lambda x:
+                    f"{x:.6f}",
+
+                "mean_rmsle":
+                    lambda x:
+                    f"{x:.6f}",
+
+                "std_rmsle":
+                    lambda x:
+                    f"{x:.6f}",
+
+                "mean_delta":
+                    lambda x:
+                    f"{x:+.6f}",
+
+                "mean_best_iteration":
+                    lambda x:
+                    f"{x:.0f}",
+            },
+        )
+    )
+
+
+    print(
+        "\nBaseline mean:",
+        f"{baseline_mean:.6f}",
+    )
+
+
+    print(
+        "\nInterpretation:"
+    )
+
+    print(
+        "delta < 0  -> 제거 후 성능 개선"
+    )
+
+    print(
+        "delta = 0  -> 성능 동일"
+    )
+
+    print(
+        "delta > 0  -> 제거 후 성능 악화"
+    )
+
+
+    # =====================================================
+    # Save
+    # =====================================================
+
+    OUTPUT_DIR.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+
+    all_fold_results.to_csv(
+        OUTPUT_DIR
+        / "ablation_fold_results.csv",
+
+        index=False,
+
+        encoding="utf-8-sig",
+    )
+
+
+    experiment_summary.to_csv(
+        OUTPUT_DIR
+        / "ablation_summary.csv",
+
+        index=False,
+
+        encoding="utf-8-sig",
+    )
+
+
+    all_mean_importances.to_csv(
+        OUTPUT_DIR
+        / "ablation_mean_importance.csv",
+
+        index=False,
+
+        encoding="utf-8-sig",
+    )
+
+
+    all_per_fold_importances.to_csv(
+        OUTPUT_DIR
+        / "ablation_per_fold_importance.csv",
+
+        index=False,
+
+        encoding="utf-8-sig",
+    )
+
+
+    print(
+        "\nSaved:",
+        OUTPUT_DIR
+    )
+
+
+    print(
+        "\nBaseline retraining:",
+        RETRAIN_BASELINE
+    )
+
+
+    print(
+        "\n주의:"
+    )
+
+    print(
+        "Baseline은 과거 동일 설정에서 저장된 "
+        "점수를 사용합니다."
+    )
+
+    print(
+        "파이프라인 또는 전처리가 바뀌었다면 "
+        "저장 Baseline과 직접 비교하면 안 됩니다."
+    )
+
+
+    return (
+        all_fold_results,
+        experiment_summary,
+        all_mean_importances,
+        all_per_fold_importances,
+    )
+
+
+# =========================================================
+# 16. Execute
+# =========================================================
 
 if __name__ == "__main__":
-    run_experiment()
+
+    (
+        all_fold_results,
+        experiment_summary,
+        all_mean_importances,
+        all_per_fold_importances,
+    ) = run_experiments()

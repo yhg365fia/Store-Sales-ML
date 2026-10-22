@@ -192,9 +192,511 @@ TIME_SERIES_FEATURES = (
     LAG_FEATURES + ROLLING_FEATURES + EMA_FEATURES
 )
 
+# =========================================================
+# 6. Transactions 외부 시계열 피처
+# =========================================================
+
+TRANSACTION_LAGS = (16, 21, 28)
+
+TRANSACTION_LAG_FEATURES = [
+    f"transactions_lag_{lag}"
+    for lag in TRANSACTION_LAGS
+]
+
+TRANSACTION_ROLLING_SHIFT = 16
+TRANSACTION_ROLLING_WINDOWS = (7, 14, 28)
+
+TRANSACTION_ROLLING_FEATURES = [
+    f"transactions_rolling_mean_{TRANSACTION_ROLLING_SHIFT}_{window}"
+    for window in TRANSACTION_ROLLING_WINDOWS
+]
+
+
+def _store_date_reference(df, value_col):
+    """
+    date × store_nbr마다 하나의 값만 있어야 하는 외부 변수를
+    매장별 일별 시계열로 축약합니다.
+
+    train에는 family별 행이 반복되므로 transactions도 같은 날짜/매장에
+    여러 번 반복되어 있습니다. 그대로 shift하면 '행 기준 shift'가 되므로
+    반드시 date × store_nbr 한 행으로 축약한 뒤 시계열 피처를 만듭니다.
+    """
+    required = ["date", "store_nbr", value_col]
+    missing = [col for col in required if col not in df.columns]
+
+    if missing:
+        raise ValueError(
+            f"{value_col} 시계열 생성에 필요한 컬럼이 없습니다: {missing}"
+        )
+
+    work = df[required].copy()
+    work["date"] = pd.to_datetime(work["date"])
+
+    if work[["date", "store_nbr"]].isna().any().any():
+        raise ValueError(
+            f"{value_col}: date 또는 store_nbr에 결측치가 있습니다."
+        )
+
+    values = pd.to_numeric(
+        work[value_col],
+        errors="coerce",
+    )
+
+    if values.isna().any():
+        raise ValueError(
+            f"{value_col}: 원본 값에 결측치가 있습니다."
+        )
+
+    if not np.isfinite(
+        values.to_numpy(dtype=float)
+    ).all():
+        raise ValueError(
+            f"{value_col}: 무한대 등 유효하지 않은 값이 있습니다."
+        )
+
+    if (values < 0).any():
+        raise ValueError(
+            f"{value_col}: 음수 값이 있습니다."
+        )
+
+    work[value_col] = values
+
+    # 같은 date × store에서 family마다 값이 달라지는지 확인
+    per_key_nunique = (
+        work.groupby(
+            ["date", "store_nbr"],
+            observed=True,
+        )[value_col]
+        .nunique(dropna=False)
+    )
+
+    if per_key_nunique.gt(1).any():
+        raise ValueError(
+            f"{value_col}: 같은 date × store_nbr에서 값이 서로 다릅니다."
+        )
+
+    daily = (
+        work.drop_duplicates(
+            ["date", "store_nbr"]
+        )
+        .sort_values(
+            ["store_nbr", "date"]
+        )
+        .reset_index(drop=True)
+    )
+
+    # shift(16)이 실제 16일 전을 뜻하도록 날짜 연속성 확인
+    date_diff = (
+        daily.groupby(
+            "store_nbr",
+            observed=True,
+        )["date"]
+        .diff()
+    )
+
+    invalid_gap = (
+        date_diff.notna()
+        & date_diff.ne(
+            pd.Timedelta(days=1)
+        )
+    )
+
+    if invalid_gap.any():
+        raise ValueError(
+            f"{value_col}: 매장별 날짜가 연속적이지 않습니다."
+        )
+
+    return daily
+
+
+def _merge_store_date_features(df, daily, feature_cols):
+    """
+    date × store_nbr 단위로 만든 외부 시계열 피처를
+    원래 store × family × date 행에 다시 연결합니다.
+    """
+    result = df.copy()
+    result["_external_row_order"] = np.arange(
+        len(result)
+    )
+
+    lookup = daily[
+        [
+            "date",
+            "store_nbr",
+            *feature_cols,
+        ]
+    ].copy()
+
+    if lookup.duplicated(
+        ["date", "store_nbr"]
+    ).any():
+        raise ValueError(
+            "외부 시계열 lookup에 date × store_nbr 중복이 있습니다."
+        )
+
+    before = len(result)
+
+    result = result.merge(
+        lookup,
+        on=["date", "store_nbr"],
+        how="left",
+        validate="many_to_one",
+        sort=False,
+    )
+
+    if len(result) != before:
+        raise ValueError(
+            "외부 시계열 피처 병합 후 행 수가 변경되었습니다."
+        )
+
+    result = (
+        result.sort_values(
+            "_external_row_order"
+        )
+        .drop(columns="_external_row_order")
+        .reset_index(drop=True)
+    )
+
+    return result
+
+
+def add_transaction_lag_features(
+    df,
+    lags=TRANSACTION_LAGS,
+):
+    """
+    매장별 transactions Lag.
+
+    16일 일괄 예측이므로 모든 lag는 16 이상이어야 합니다.
+    """
+    if any(lag < 16 for lag in lags):
+        raise ValueError(
+            "Transactions Lag는 16 이상이어야 합니다."
+        )
+
+    daily = _store_date_reference(
+        df,
+        "transactions",
+    )
+
+    grouped = daily.groupby(
+        "store_nbr",
+        observed=True,
+    )["transactions"]
+
+    feature_cols = []
+
+    for lag in lags:
+        feature = f"transactions_lag_{lag}"
+        daily[feature] = grouped.shift(lag)
+        feature_cols.append(feature)
+
+    return _merge_store_date_features(
+        df,
+        daily,
+        feature_cols,
+    )
+
+
+def add_transaction_rolling_features(
+    df,
+    shift=TRANSACTION_ROLLING_SHIFT,
+    windows=TRANSACTION_ROLLING_WINDOWS,
+):
+    """
+    매장별 transactions 과거 Rolling Mean.
+
+    예측일 t에서 사용할 수 있도록 transactions를 먼저 16일 shift한 뒤,
+    7/14/28일 평균을 계산합니다.
+    """
+    if shift < 16:
+        raise ValueError(
+            "Transactions Rolling shift는 16 이상이어야 합니다."
+        )
+
+    if any(window < 1 for window in windows):
+        raise ValueError(
+            "Transactions Rolling window는 1 이상이어야 합니다."
+        )
+
+    daily = _store_date_reference(
+        df,
+        "transactions",
+    )
+
+    grouped = daily.groupby(
+        "store_nbr",
+        observed=True,
+    )["transactions"]
+
+    feature_cols = []
+
+    for window in windows:
+        feature = (
+            f"transactions_rolling_mean_{shift}_{window}"
+        )
+
+        daily[feature] = grouped.transform(
+            lambda x: (
+                x.shift(shift)
+                .rolling(
+                    window=window,
+                    min_periods=window,
+                )
+                .mean()
+            )
+        )
+
+        feature_cols.append(feature)
+
+    return _merge_store_date_features(
+        df,
+        daily,
+        feature_cols,
+    )
+
 
 # =========================================================
-# 6. Group Statistics — A / B / C / D / E 목록
+# 7. Oil 외부 시계열 피처
+# =========================================================
+
+OIL_RAW_FEATURES = [
+    "dcoilwtico",
+]
+
+OIL_ROLLING_WINDOW = 7
+
+OIL_ROLLING_FEATURES = [
+    f"oil_rolling_mean_{OIL_ROLLING_WINDOW}",
+]
+
+OIL_DIFF_PERIOD = 7
+
+OIL_DIFF_FEATURES = [
+    f"oil_diff_{OIL_DIFF_PERIOD}",
+]
+
+
+def _oil_daily_reference(df):
+    """
+    dcoilwtico는 날짜별 전국 공통 값이므로 date당 한 행으로 축약합니다.
+    같은 날짜의 모든 매장/상품군에서 값이 동일한지도 확인합니다.
+    """
+    required = [
+        "date",
+        "dcoilwtico",
+    ]
+
+    missing = [
+        col
+        for col in required
+        if col not in df.columns
+    ]
+
+    if missing:
+        raise ValueError(
+            f"Oil 피처 생성에 필요한 컬럼이 없습니다: {missing}"
+        )
+
+    work = df[required].copy()
+    work["date"] = pd.to_datetime(
+        work["date"]
+    )
+
+    oil = pd.to_numeric(
+        work["dcoilwtico"],
+        errors="coerce",
+    )
+
+    if oil.isna().any():
+        raise ValueError(
+            "dcoilwtico에 결측치가 있습니다."
+        )
+
+    if not np.isfinite(
+        oil.to_numpy(dtype=float)
+    ).all():
+        raise ValueError(
+            "dcoilwtico에 무한대 등 유효하지 않은 값이 있습니다."
+        )
+
+    if (oil < 0).any():
+        raise ValueError(
+            "dcoilwtico에 음수 값이 있습니다."
+        )
+
+    work["dcoilwtico"] = oil
+
+    per_date_nunique = (
+        work.groupby(
+            "date",
+            observed=True,
+        )["dcoilwtico"]
+        .nunique(dropna=False)
+    )
+
+    if per_date_nunique.gt(1).any():
+        raise ValueError(
+            "같은 날짜에서 dcoilwtico 값이 서로 다릅니다."
+        )
+
+    daily = (
+        work.drop_duplicates("date")
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    date_diff = daily["date"].diff()
+
+    invalid_gap = (
+        date_diff.notna()
+        & date_diff.ne(
+            pd.Timedelta(days=1)
+        )
+    )
+
+    if invalid_gap.any():
+        raise ValueError(
+            "Oil 날짜가 연속적이지 않습니다."
+        )
+
+    return daily
+
+
+def _merge_date_features(
+    df,
+    daily,
+    feature_cols,
+):
+    """
+    날짜 단위 Oil 파생 피처를 모든 store × family 행에 연결합니다.
+    """
+    result = df.copy()
+    result["_external_row_order"] = np.arange(
+        len(result)
+    )
+
+    lookup = daily[
+        [
+            "date",
+            *feature_cols,
+        ]
+    ].copy()
+
+    if lookup["date"].duplicated().any():
+        raise ValueError(
+            "Oil lookup 날짜가 중복됩니다."
+        )
+
+    before = len(result)
+
+    result = result.merge(
+        lookup,
+        on="date",
+        how="left",
+        validate="many_to_one",
+        sort=False,
+    )
+
+    if len(result) != before:
+        raise ValueError(
+            "Oil 피처 병합 후 행 수가 변경되었습니다."
+        )
+
+    result = (
+        result.sort_values(
+            "_external_row_order"
+        )
+        .drop(columns="_external_row_order")
+        .reset_index(drop=True)
+    )
+
+    return result
+
+
+def add_oil_rolling_features(
+    df,
+    window=OIL_ROLLING_WINDOW,
+):
+    """
+    당일을 포함한 최근 7일 dcoilwtico 평균.
+
+    Oil은 예측 기간에도 제공되는 외생 변수로 사용하는 실험이므로,
+    Transactions처럼 16일 shift하지 않습니다.
+    """
+    if window < 1:
+        raise ValueError(
+            "Oil Rolling window는 1 이상이어야 합니다."
+        )
+
+    daily = _oil_daily_reference(
+        df
+    )
+
+    feature = (
+        f"oil_rolling_mean_{window}"
+    )
+
+    daily[feature] = (
+        daily["dcoilwtico"]
+        .rolling(
+            window=window,
+            min_periods=window,
+        )
+        .mean()
+    )
+
+    return _merge_date_features(
+        df,
+        daily,
+        [feature],
+    )
+
+
+def add_oil_diff_features(
+    df,
+    period=OIL_DIFF_PERIOD,
+):
+    """
+    현재 유가 - 7일 전 유가.
+    Oil은 예측 날짜의 값이 제공된다는 전제의 외생 변수 실험입니다.
+    """
+    if period < 1:
+        raise ValueError(
+            "Oil diff period는 1 이상이어야 합니다."
+        )
+
+    daily = _oil_daily_reference(
+        df
+    )
+
+    feature = f"oil_diff_{period}"
+
+    daily[feature] = (
+        daily["dcoilwtico"]
+        - daily["dcoilwtico"].shift(period)
+    )
+
+    return _merge_date_features(
+        df,
+        daily,
+        [feature],
+    )
+
+
+EXTERNAL_EXPERIMENT_FEATURES = (
+    TRANSACTION_LAG_FEATURES
+    + TRANSACTION_ROLLING_FEATURES
+    + OIL_RAW_FEATURES
+    + OIL_ROLLING_FEATURES
+    + OIL_DIFF_FEATURES
+)
+
+
+
+
+# =========================================================
+# 8. Group Statistics — A / B / C / D / E 목록
 # =========================================================
 
 GROUP_STAT_FEATURES_A = [
@@ -222,7 +724,7 @@ GROUP_STAT_FEATURES = GROUP_STAT_FEATURES_A.copy()
 
 
 # =========================================================
-# 7. 과거 누적 평균 공통 함수
+# 9. 과거 누적 평균 공통 함수
 # =========================================================
 
 def _add_group_past_mean(
@@ -374,7 +876,7 @@ def _add_group_past_mean(
 
 
 # =========================================================
-# 8. A: 상품군 × 요일 — 함수 보존
+# 10. A: 상품군 × 요일 — 함수 보존
 # =========================================================
 
 def add_family_dayofweek_mean(train_df, valid_df):
@@ -387,7 +889,7 @@ def add_family_dayofweek_mean(train_df, valid_df):
 
 
 # =========================================================
-# 9. B: 매장 × 상품군 × 요일 — 이번 실험
+# 11. B: 매장 × 상품군 × 요일 — 이번 실험
 # =========================================================
 
 def add_store_family_dayofweek_mean(train_df, valid_df):
@@ -400,7 +902,7 @@ def add_store_family_dayofweek_mean(train_df, valid_df):
 
 
 # =========================================================
-# C: 매장 × 상품군 — 기존 기능 호환
+# 12. C: 매장 × 상품군 — 기존 기능 호환
 # =========================================================
 
 def add_store_family_mean(train_df, valid_df):
@@ -413,7 +915,7 @@ def add_store_family_mean(train_df, valid_df):
 
 
 # =========================================================
-# D: 상품군 × 휴일 여부
+# 13. D: 상품군 × 휴일 여부
 # =========================================================
 
 def add_family_holiday_mean(train_df, valid_df):
@@ -426,7 +928,7 @@ def add_family_holiday_mean(train_df, valid_df):
 
 
 # =========================================================
-# E: 상품군 × 이벤트 종류
+# 14. E: 상품군 × 이벤트 종류
 # =========================================================
 
 def add_family_event_group_mean(train_df, valid_df):
@@ -439,7 +941,7 @@ def add_family_event_group_mean(train_df, valid_df):
 
 
 # =========================================================
-# 10. 일반 Feature Engineering 파이프라인
+# 15. 일반 Feature Engineering 파이프라인
 # =========================================================
 
 def apply_feature_engineering(df):
@@ -452,7 +954,7 @@ def apply_feature_engineering(df):
 
 
 # =========================================================
-# 11. Holiday 실험용 목록
+# 16. Holiday 실험용 목록
 # =========================================================
 
 HOLIDAY_FEATURES_A = [
@@ -476,7 +978,7 @@ HOLIDAY_FEATURES_C = (
 )
 
 # =========================================================
-# 12. 휴일 / 이벤트 그룹 키 생성 — D / E 실험용
+# 17. 휴일 / 이벤트 그룹 키 생성 — D / E 실험용
 # =========================================================
 
 EVENT_FLAG_COLUMNS = HOLIDAY_FEATURES_B.copy()
