@@ -1,0 +1,7 @@
+{
+  "features": 26,
+  "mean_rmsle": 0.4108314855435948,
+  "std_rmsle_ddof1": 0.008187132487522555,
+  "pooled_oof_rmsle": 0.41088586688544354,
+  "median_best_iteration": 5583
+}

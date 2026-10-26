@@ -1,0 +1,17 @@
+{
+  "fold": "Fold 3",
+  "params": {
+    "num_leaves": 64,
+    "min_child_samples": 40,
+    "max_depth": 12,
+    "reg_lambda": 3.0351230432674776,
+    "reg_alpha": 2.571172192068058,
+    "colsample_bytree": 0.8777243706586128,
+    "learning_rate": 0.027554772699599876
+  },
+  "signature": "563526a7fe3be9e2fcef4c0d43021b445a2283307b7056279690387b4e7cbd0c",
+  "valid_rmsle": 0.3996400646681191,
+  "train_sample_rmsle": 0.353310432740104,
+  "gap_sample": 0.04632963192801509,
+  "best_iteration": 7991
+}

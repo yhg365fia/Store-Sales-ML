@@ -1,0 +1,122 @@
+{
+  "feature_set": "lag_only",
+  "features": [
+    "store_nbr",
+    "family",
+    "city",
+    "state",
+    "type",
+    "cluster",
+    "year",
+    "month",
+    "day",
+    "dayofweek",
+    "is_weekend",
+    "onpromotion",
+    "is_promotion",
+    "holiday_count",
+    "event_christmas",
+    "event_new_year",
+    "event_carnival",
+    "event_mothers_day",
+    "event_independence_day",
+    "event_city_foundation",
+    "event_good_friday",
+    "event_labor_day",
+    "event_other",
+    "sales_lag_16",
+    "sales_lag_21",
+    "sales_lag_28"
+  ],
+  "best_trial_number": 12,
+  "mean_valid_rmsle": 0.39318056798132534,
+  "std_valid_rmsle": 0.011933553970956471,
+  "tuned_params": {
+    "num_leaves": 68,
+    "min_child_samples": 130,
+    "max_depth": 12,
+    "reg_lambda": 1.8996693167991832,
+    "reg_alpha": 1.3134499190281177,
+    "colsample_bytree": 0.9789589309966082,
+    "learning_rate": 0.06502660590385365
+  },
+  "best_fold_results": [
+    {
+      "fold": "Fold 1",
+      "params": {
+        "num_leaves": 68,
+        "min_child_samples": 130,
+        "max_depth": 12,
+        "reg_lambda": 1.8996693167991832,
+        "reg_alpha": 1.3134499190281177,
+        "colsample_bytree": 0.9789589309966082,
+        "learning_rate": 0.06502660590385365
+      },
+      "signature": "563526a7fe3be9e2fcef4c0d43021b445a2283307b7056279690387b4e7cbd0c",
+      "valid_rmsle": 0.3795459475953656,
+      "train_sample_rmsle": 0.3502083010482659,
+      "gap_sample": 0.029337646547099694,
+      "best_iteration": 3592
+    },
+    {
+      "fold": "Fold 2",
+      "params": {
+        "num_leaves": 68,
+        "min_child_samples": 130,
+        "max_depth": 12,
+        "reg_lambda": 1.8996693167991832,
+        "reg_alpha": 1.3134499190281177,
+        "colsample_bytree": 0.9789589309966082,
+        "learning_rate": 0.06502660590385365
+      },
+      "signature": "563526a7fe3be9e2fcef4c0d43021b445a2283307b7056279690387b4e7cbd0c",
+      "valid_rmsle": 0.39827087048010956,
+      "train_sample_rmsle": 0.3578420553516377,
+      "gap_sample": 0.04042881512847185,
+      "best_iteration": 2714
+    },
+    {
+      "fold": "Fold 3",
+      "params": {
+        "num_leaves": 68,
+        "min_child_samples": 130,
+        "max_depth": 12,
+        "reg_lambda": 1.8996693167991832,
+        "reg_alpha": 1.3134499190281177,
+        "colsample_bytree": 0.9789589309966082,
+        "learning_rate": 0.06502660590385365
+      },
+      "signature": "563526a7fe3be9e2fcef4c0d43021b445a2283307b7056279690387b4e7cbd0c",
+      "valid_rmsle": 0.40172488586850064,
+      "train_sample_rmsle": 0.34980770607903644,
+      "gap_sample": 0.051917179789464196,
+      "best_iteration": 4138
+    }
+  ],
+  "final_n_estimators": 3592,
+  "folds": [
+    {
+      "name": "Fold 1",
+      "end": "2017-06-28",
+      "start": "2017-06-29",
+      "stop": "2017-07-14"
+    },
+    {
+      "name": "Fold 2",
+      "end": "2017-07-14",
+      "start": "2017-07-15",
+      "stop": "2017-07-30"
+    },
+    {
+      "name": "Fold 3",
+      "end": "2017-07-30",
+      "start": "2017-07-31",
+      "stop": "2017-08-15"
+    }
+  ],
+  "early_stopping_rounds": 150,
+  "prior_public_reference": {
+    "public": 0.46161,
+    "note": "Old Lag-only public submission; not identical tuning conditions."
+  }
+}
