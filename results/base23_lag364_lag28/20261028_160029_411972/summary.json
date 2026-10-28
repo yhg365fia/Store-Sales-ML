@@ -1,0 +1,13 @@
+{
+  "model": "base23_lag364_lag28",
+  "feature_count": 25,
+  "folds_complete": 3,
+  "mean_3fold": 0.4009963921301571,
+  "std_3fold_ddof1": 0.003841224103154246,
+  "mean_fold23": 0.40311551013443503,
+  "gap_fold23": 0.0022654088041569875,
+  "median_cv_best_iteration": 3407,
+  "august_2016_rmsle": 0.76329207347494,
+  "august_2016_best_iteration": 5420,
+  "backtest_note": "Uses its own labels for Early Stopping; not untouched."
+}

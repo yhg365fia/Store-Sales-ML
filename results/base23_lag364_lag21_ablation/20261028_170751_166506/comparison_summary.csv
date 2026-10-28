@@ -1,0 +1,4 @@
+experiment,feature_count,folds_completed,fold_1_rmsle,fold_1_best_iteration,fold_2_rmsle,fold_2_best_iteration,fold_3_rmsle,fold_3_best_iteration,mean_3fold,std_3fold_ddof1,mean_fold23,gap_fold23,mean_best_iteration,backtest_fixed_iteration,august_2016_backtest_rmsle,delta_3fold_vs_base,delta_fold23_vs_base,delta_august_vs_base,delta_fold_1_vs_base,delta_fold_2_vs_base,delta_fold_3_vs_base,improved_folds_vs_base
+base23_lag364,24,1,0.4482288218269444,995.0,,,,,,,,,,,,,,,0.0,,,
+base23_lag364_lag21,25,0,,,,,,,,,,,,,,,,,,,,
+base23_lag364_lag21_lag28,26,0,,,,,,,,,,,,,,,,,,,,

@@ -1,0 +1,2 @@
+experiment,fold,feature_count,train_end,valid_start,valid_end,train_rows,valid_rows,best_iteration,rmsle
+base23_lag364,Fold 1,24,2017-06-28,2017-06-29,2017-07-14,2922480,28512,995,0.4482288218269444

@@ -1,0 +1,4 @@
+experiment,feature_count,train_end,valid_start,valid_end,train_rows,valid_rows,mode,best_iteration,rmsle
+base23_lag364_lag28,25,2016-08-15,2016-08-16,2016-08-31,2357586,28512,early_stop,5420,0.76329207347494
+add_transactions_lag16,26,2016-08-15,2016-08-16,2016-08-31,2357586,28512,early_stop,3650,0.7672032680201877
+add_oil_raw,26,2016-08-15,2016-08-16,2016-08-31,2357586,28512,early_stop,5251,0.7421667466075839

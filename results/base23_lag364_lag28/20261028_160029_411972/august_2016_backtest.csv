@@ -1,0 +1,2 @@
+split,train_end,valid_start,valid_end,features,train_rows,valid_rows,best_iteration,rmsle
+August 2016 Backtest,2016-08-15,2016-08-16,2016-08-31,25,2357586,28512,5420,0.76329207347494

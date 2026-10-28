@@ -1,0 +1,12 @@
+{
+  "experiment": "add_oil_raw",
+  "feature_count": 26,
+  "train_end": "2016-08-15",
+  "valid_start": "2016-08-16",
+  "valid_end": "2016-08-31",
+  "train_rows": 2357586,
+  "valid_rows": 28512,
+  "mode": "early_stop",
+  "best_iteration": 5251,
+  "rmsle": 0.7421667466075839
+}

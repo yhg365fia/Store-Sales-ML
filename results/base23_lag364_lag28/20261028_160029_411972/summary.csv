@@ -1,0 +1,2 @@
+model,feature_count,folds_complete,mean_3fold,std_3fold_ddof1,mean_fold23,gap_fold23,median_cv_best_iteration,august_2016_rmsle,august_2016_best_iteration,backtest_note
+base23_lag364_lag28,25,3,0.4009963921301571,0.003841224103154246,0.40311551013443503,0.0022654088041569875,3407,0.76329207347494,5420,Uses its own labels for Early Stopping; not untouched.

@@ -1,26 +1,36 @@
-"""Controlled 16-day CV experiments: Base23 + sales_lag_364, plus ONE addition.
-
-Put in src/modeling_overnight_ablation.py, next to main.py/feature_engineering.py.
-Run at project root:
-    python src/modeling_overnight_ablation.py --check-only
-    python src/modeling_overnight_ablation.py
-    python src/modeling_overnight_ablation.py --run-dir results/base23_lag364_overnight/<run_id>
-
-Exactly the existing project's 3 folds, LightGBM FIXED_PARAMS, early stopping,
-log1p target, categorical handling and RMSLE. No Optuna, no submission.
-The *only predictor changes* are oil raw, lagged transactions, sales lag16, or
-sales lag28, added ONE AT A TIME to a shared Base23 + sales_lag_364.
-
-IMPORTANT: Transactions on the SAME validation date would not exist in Kaggle
-Test. The transactions experiment therefore uses transactions_lag_16 (known at
-all 16 prediction dates), not raw future-day transactions. Existing main()
-preprocessing/imputation remains unchanged; review its interpolation policy
-if strict fold-cutoff availability is required.
 """
+Optuna: Base23 + sales_lag_364 + sales_lag_28 (25 features).
+Save as src/modeling_optuna.py beside existing main.py/feature_engineering.py.
+Existing preprocessing, restored daily panel, category handling and log target
+are retained. Each trial evaluates all three original 2017 folds with ES 150.
+Objective: arithmetic mean of three clipped-prediction RMSLE scores.
+Trial 0 uses the original fixed parameters as a baseline.
+
+The selected trial's mean CV best_iteration (rounded) fixes the 2016 August
+backtest training rounds. NO backtest early stopping or parameter selection.
+Since parameters and iterations were selected using 2017 data, the 2016
+backtest remains diagnostic, not an independent historical holdout.
+
+Default: 20 TOTAL completed trials, sequential (each is 3 LightGBM fits).
+python src/modeling_optuna.py --check-only
+python src/modeling_optuna.py --n-trials 20
+python src/modeling_optuna.py --run-dir results/.../RUN --n-trials 30
+Same run-dir resumes SQLite history and compatible per-fold prediction caches.
+Do not launch concurrent processes for the same run-dir.
+Outputs: study.db, trials.csv, best_params.json, cv_summary.csv,
+backtest summary, and keyed validation predictions for every fitted fold.
+This script does not create a Kaggle submission.
+"""
+from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import json
+import os
+import inspect
+import optuna
+import lightgbm
 from datetime import datetime
 from pathlib import Path
 
@@ -32,10 +42,10 @@ from main import main
 from feature_engineering import add_lag_features
 
 
-# ============================================================================
-# 1. FROZEN configuration copied from the supplied modeling.py (2026-10-26)
-# ============================================================================
-BASE_FEATURES = [
+ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_ROOT = ROOT / "results" / "base23_lag364_lag28_optuna"
+
+BASE23 = [
     "store_nbr", "family", "city", "state", "type", "cluster",
     "year", "month", "day", "dayofweek", "is_weekend",
     "onpromotion", "is_promotion", "holiday_count",
@@ -43,17 +53,36 @@ BASE_FEATURES = [
     "event_mothers_day", "event_independence_day", "event_city_foundation",
     "event_good_friday", "event_labor_day", "event_other",
 ]
-CATEGORICAL_FEATURES = ["store_nbr", "family", "city", "state", "type", "cluster"]
+
+LAGS = (364, 28)
+EXPERIMENT = "base23_lag364_lag28"
+FEATURES = BASE23 + ["sales_lag_364", "sales_lag_28"]
+FEATURE_SETS = {EXPERIMENT: FEATURES}
+CATEGORICAL = ["store_nbr", "family", "city", "state", "type", "cluster"]
 KEYS = ["store_nbr", "family"]
-TARGET_COL = "sales_log"
-FORECAST_HORIZON = 16
-N_ESTIMATORS = 8000
+TARGET = "sales_log"
+HORIZON = 16
+EXPECTED_TRAIN_ROWS = 3_008_016
+EXPECTED_VALID_ROWS = 28_512
+N_SERIES = 54 * 33
+N_ESTIMATORS = 8_000
 EARLY_STOPPING_ROUNDS = 150
-FOLDS = [
-    {"fold": "Fold 1", "train_end": "2017-06-28", "valid_start": "2017-06-29", "valid_end": "2017-07-14"},
-    {"fold": "Fold 2", "train_end": "2017-07-14", "valid_start": "2017-07-15", "valid_end": "2017-07-30"},
-    {"fold": "Fold 3", "train_end": "2017-07-30", "valid_start": "2017-07-31", "valid_end": "2017-08-15"},
+
+CV_FOLDS = [
+    dict(name="Fold 1", train_end="2017-06-28",
+         valid_start="2017-06-29", valid_end="2017-07-14"),
+    dict(name="Fold 2", train_end="2017-07-14",
+         valid_start="2017-07-15", valid_end="2017-07-30"),
+    dict(name="Fold 3", train_end="2017-07-30",
+         valid_start="2017-07-31", valid_end="2017-08-15"),
 ]
+AUGUST_BACKTEST = dict(
+    name="August 2016 Backtest",
+    train_end="2016-08-15",
+    valid_start="2016-08-16",
+    valid_end="2016-08-31",
+)
+
 FIXED_PARAMS = dict(
     boosting_type="gbdt",
     objective="regression",
@@ -75,352 +104,423 @@ FIXED_PARAMS = dict(
     verbosity=-1,
 )
 
-# ONLY this baseline / these four modifications are compared.
-# Payday (is_15th, is_month_end) is never a model input.
-LAG_364 = "sales_lag_364"
-OIL_FEATURE = "oil_raw"
-TRANSACTIONS_FEATURE = "transactions_lag_16"
-FEATURE_SETS = {
-    "base23_lag364": BASE_FEATURES + [LAG_364],
-    "add_oil_raw": BASE_FEATURES + [LAG_364, OIL_FEATURE],
-    "add_transactions": BASE_FEATURES + [LAG_364, TRANSACTIONS_FEATURE],
-    "add_sales_lag16": BASE_FEATURES + [LAG_364, "sales_lag_16"],
-    "add_sales_lag28": BASE_FEATURES + [LAG_364, "sales_lag_28"],
-}
 
-# main() output schema was NOT provided. These are expected raw-source names.
-# If main() uses different names, change ONLY these aliases and record them.
-OIL_SOURCE_CANDIDATES = ("dcoilwtico", "oil_price", "oil_raw", "oil", "oil_price_raw")
-TRANSACTIONS_SOURCE_CANDIDATES = ("transactions", "transactions_filled", "transaction")
-ROOT = Path(__file__).resolve().parent.parent
-OUTPUT_ROOT = ROOT / "results" / "base23_lag364_overnight"
+def check_configuration() -> None:
+    if len(BASE23) != 23 or len(set(BASE23)) != 23:
+        raise ValueError("The Base23 list must contain 23 unique columns")
+    if len(FEATURES) != 25 or len(set(FEATURES)) != 25:
+        raise ValueError("Expected exactly Base23 + lag364 + lag28")
+    if FEATURES != BASE23 + ["sales_lag_364", "sales_lag_28"]:
+        raise ValueError("Unexpected feature configuration")
 
-
-def validate_configuration():
-    if len(BASE_FEATURES) != 23 or len(set(BASE_FEATURES)) != 23:
-        raise ValueError("BASE_FEATURES must contain exactly the original 23 features")
-    if len(FEATURE_SETS) != 5 or any(len(v) != (24 if k == "base23_lag364" else 25)
-                                     for k, v in FEATURE_SETS.items()):
-        raise ValueError("Expected the 24-feature baseline plus four 25-feature variants")
-    expected = BASE_FEATURES + [LAG_364]
-    if FEATURE_SETS["base23_lag364"] != expected:
-        raise ValueError("Baseline features changed")
-    for name, cols in FEATURE_SETS.items():
-        if cols[:24] != expected or len(set(cols)) != len(cols):
-            raise ValueError(f"Non-controlled feature change in {name}")
-        if any(x in cols for x in ("is_15th", "is_month_end", "sales", TARGET_COL)):
-            raise ValueError(f"Payday/target unexpectedly included in {name}")
-    if len(FOLDS) != 3:
-        raise ValueError("Exactly the original three folds are required")
-    for fold in FOLDS:
-        end = pd.Timestamp(fold["train_end"])
-        start = pd.Timestamp(fold["valid_start"])
-        stop = pd.Timestamp(fold["valid_end"])
-        if start != end + pd.Timedelta(days=1) or (stop - start).days + 1 != FORECAST_HORIZON:
-            raise ValueError(f"Invalid 16-day fold: {fold['fold']}")
-        for lag in (16, 28, 364):
-            if stop - pd.Timedelta(days=lag) > end:
-                raise ValueError(f"lag{lag} would access validation targets: {fold['fold']}")
+    for split in CV_FOLDS + [AUGUST_BACKTEST]:
+        cutoff = pd.Timestamp(split["train_end"])
+        start = pd.Timestamp(split["valid_start"])
+        stop = pd.Timestamp(split["valid_end"])
+        if start != cutoff + pd.Timedelta(days=1):
+            raise ValueError(f"Nonadjacent cutoff: {split['name']}")
+        if (stop - start).days + 1 != HORIZON:
+            raise ValueError(f"Validation must be 16 days: {split['name']}")
+        for lag in LAGS:
+            if stop - pd.Timedelta(days=lag) > cutoff:
+                raise ValueError(f"Future target would enter lag{lag}")
 
 
-def resolve_source(columns, names, label):
-    hits = [s for s in names if s in columns]
-    if len(hits) != 1:
-        raise ValueError(
-            f"Cannot safely identify {label} source column: candidates found={hits}. "
-            f"Expected exactly one of {names}; actual columns={list(columns)}. "
-            "Check main() output and edit SOURCE_CANDIDATES at the top of this file."
-        )
-    return hits[0]
-
-
-def prepare_features(df):
-    validate_configuration()
-    oil_source = resolve_source(df.columns, OIL_SOURCE_CANDIDATES, "oil raw")
-    txn_source = resolve_source(df.columns, TRANSACTIONS_SOURCE_CANDIDATES, "transactions")
-    required = list(dict.fromkeys(["date", "sales"] + BASE_FEATURES + [oil_source, txn_source]))
-    missing = [name for name in required if name not in df.columns]
+def prepare_features(raw: pd.DataFrame) -> pd.DataFrame:
+    check_configuration()
+    required = ["date", "sales"] + BASE23
+    missing = [column for column in required if column not in raw.columns]
     if missing:
-        raise ValueError(f"main() missing required columns: {missing}")
+        raise ValueError(f"main() missing required Train columns: {missing}")
 
-    # Never feed other columns from main() to the model.
-    df = df.loc[:, required].copy()
+    df = raw.loc[:, required].copy()
     df["date"] = pd.to_datetime(df["date"], errors="raise")
+    df["sales"] = pd.to_numeric(df["sales"], errors="raise")
+    if (len(df) != EXPECTED_TRAIN_ROWS
+            or df["date"].min() != pd.Timestamp("2013-01-01")
+            or df["date"].max() != pd.Timestamp("2017-08-15")):
+        raise ValueError("Expected complete restored Train 2013-01-01..2017-08-15")
     if df[KEYS + ["date"]].isna().any().any():
-        raise ValueError("Null store_nbr/family/date")
+        raise ValueError("Null panel key or date")
     if df.duplicated(KEYS + ["date"]).any():
         raise ValueError("Duplicate store_nbr/family/date")
-    if df[BASE_FEATURES].isna().any().any():
-        raise ValueError("Null in original 23 predictors")
-    if df["date"].max() != pd.Timestamp("2017-08-15"):
-        raise ValueError("Expected last training date 2017-08-15")
-    for c in ("sales", oil_source, txn_source):
-        df[c] = pd.to_numeric(df[c], errors="raise")
-        if not np.isfinite(df[c].to_numpy(dtype=float)).all():
-            raise ValueError(f"Nonfinite raw values in {c}; inspect main() imputation")
-    if (df["sales"] < 0).any() or (df[txn_source] < 0).any():
-        raise ValueError("Negative sales or transactions")
-    if not np.array_equal(df["dayofweek"], df["date"].dt.dayofweek):
-        raise ValueError("Calendar dayofweek inconsistent")
-    if not np.array_equal(df["is_weekend"], (df["date"].dt.dayofweek >= 5).astype(int)):
-        raise ValueError("Calendar is_weekend inconsistent")
+    if df[BASE23].isna().any().any():
+        raise ValueError("Null in Base23 predictors")
+    if (not np.isfinite(df["sales"].to_numpy(dtype=float)).all()
+            or (df["sales"] < 0).any()):
+        raise ValueError("Invalid sales targets")
+
+    weekday = df["date"].dt.day_of_week
+    if not np.array_equal(df["dayofweek"], weekday):
+        raise ValueError("dayofweek inconsistent with date")
+    if not np.array_equal(df["is_weekend"], (weekday >= 5).astype(int)):
+        raise ValueError("is_weekend inconsistent with date")
 
     df = df.sort_values(KEYS + ["date"]).reset_index(drop=True)
-    diffs = df.groupby(KEYS, observed=True)["date"].diff()
-    if (diffs.notna() & diffs.ne(pd.Timedelta(days=1))).any():
-        raise ValueError("Non-contiguous dates; lag shifts would not mean calendar days")
+    group_counts = df.groupby(KEYS, observed=True).size()
+    if len(group_counts) != N_SERIES or group_counts.nunique() != 1:
+        raise ValueError("Expected complete 1,782 store/family series")
+    gaps = df.groupby(KEYS, observed=True)["date"].diff()
+    if (gaps.notna() & gaps.ne(pd.Timedelta(days=1))).any():
+        raise ValueError("Missing calendar dates within one of the series")
 
-    # Exactly the original lag helper and raw-sales definition.
-    # All three lags are calculated once; only one experimental column is selected.
-    df = add_lag_features(df, lags=(364, 16, 28))
-    for d in (364, 16, 28):
-        col = f"sales_lag_{d}"
+    # Create all raw-sales lags ONCE and isolate each predictor set later.
+    df = add_lag_features(df, lags=LAGS)
+    positions = df.groupby(KEYS, observed=True).cumcount()
+    for lag in LAGS:
+        col = f"sales_lag_{lag}"
         if col not in df.columns:
-            raise ValueError(f"add_lag_features() did not create {col}")
-        expected_na = df.groupby(KEYS, observed=True).cumcount().lt(d)
-        if not df[col].isna().equals(expected_na):
-            raise ValueError(f"Unexpected missing positions in {col}")
-
-    # External predictors. Oil is the RAW oil value after existing main() QC.
-    # Transactions is shifted 16 days within each store/family history:
-    # every value used for a 16-day horizon was known at the prediction cutoff.
-    df[OIL_FEATURE] = df[oil_source].astype(float)
-    df[TRANSACTIONS_FEATURE] = df.groupby(KEYS, observed=True)[txn_source].shift(16)
-    expected_txn_na = df.groupby(KEYS, observed=True).cumcount().lt(16)
-    if not df[TRANSACTIONS_FEATURE].isna().equals(expected_txn_na):
-        raise ValueError("transactions_lag_16 unexpected null positions")
-
-    # Unchanged target definition.
-    df[TARGET_COL] = np.log1p(df["sales"])
-    print(f"[DATA] train rows={len(df):,}; oil source={oil_source}; transactions source={txn_source}", flush=True)
-    print("[RULE] Raw transactions on validation dates NOT used. "+
-          "Transactions experiment adds transactions_lag_16 only.", flush=True)
-    print("[RULE] No Payday predictors in any variant; Optuna disabled.", flush=True)
-    return df, {"oil_source": oil_source, "transactions_source": txn_source}
+            raise ValueError(f"Existing lag helper did not create {col}")
+        if not df[col].isna().equals(positions.lt(lag)):
+            raise ValueError(f"Unexpected missing positions for {col}")
+        if not np.isfinite(df[col].dropna().to_numpy(dtype=float)).all():
+            raise ValueError(f"Nonfinite values in {col}")
+    df[TARGET] = np.log1p(df["sales"])
+    print(f"[DATA] Restored train={len(df):,}; "
+          f"computed lags={LAGS}; initial lag NaNs retained.")
+    print("[FEATURE SETS]")
+    for name, cols in FEATURE_SETS.items():
+        print(f"  {name}: {len(cols)} features")
+    print("[POLICY] Optuna LightGBM; exactly Base23 + lag364 + lag28.")
+    return df
 
 
-def make_fold(df, fold):
-    end = pd.Timestamp(fold["train_end"])
-    start = pd.Timestamp(fold["valid_start"])
-    stop = pd.Timestamp(fold["valid_end"])
-    train_df = df.loc[df["date"].le(end)]
-    valid_df = df.loc[df["date"].between(start, stop)]
-    counts = valid_df.groupby(KEYS, observed=True).size()
-    if (train_df.empty or train_df["date"].max() != end
-            or set(valid_df["date"]) != set(pd.date_range(start, stop))
-            or len(valid_df) != 28_512 or len(counts) != 1782
-            or not counts.eq(FORECAST_HORIZON).all()):
-        raise ValueError(f"Incomplete 16-day validation panel in {fold['fold']}")
-    for col in (LAG_364, "sales_lag_16", "sales_lag_28", TRANSACTIONS_FEATURE, OIL_FEATURE):
-        if valid_df[col].isna().any():
-            raise ValueError(f"{fold['fold']}: {col} has missing validation values")
-    # Sanity: target/txn lag values used for the 16-day interval are historical.
-    if stop - pd.Timedelta(days=16) > end:
-        raise ValueError("Feature lookahead detected")
-    return train_df, valid_df
+def make_split(df: pd.DataFrame, split: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+    cutoff = pd.Timestamp(split["train_end"])
+    start = pd.Timestamp(split["valid_start"])
+    stop = pd.Timestamp(split["valid_end"])
+    train = df.loc[df["date"].le(cutoff)]
+    valid = df.loc[df["date"].between(start, stop)]
+    counts = valid.groupby(KEYS, observed=True).size()
+    if train.empty or train["date"].max() != cutoff:
+        raise ValueError(f"Train cutoff mismatch: {split['name']}")
+    if (len(valid) != EXPECTED_VALID_ROWS
+            or len(counts) != N_SERIES
+            or not counts.eq(HORIZON).all()
+            or set(valid["date"]) != set(pd.date_range(start, stop))):
+        raise ValueError(f"Incomplete 16-day validation panel: {split['name']}")
+    for lag in LAGS:
+        if valid[f"sales_lag_{lag}"].isna().any():
+            raise ValueError(f"Missing Valid lag{lag}: {split['name']}")
+        if stop - pd.Timedelta(days=lag) > cutoff:
+            raise ValueError(f"Leakage in lag{lag}: {split['name']}")
+    return train, valid
 
 
-def prepare_model_data(train_df, valid_df, features):
-    x_train = train_df.loc[:, features].copy()
-    x_valid = valid_df.loc[:, features].copy()
-    for col in CATEGORICAL_FEATURES:
-        categories = pd.Index(train_df[col].dropna().unique())
+def make_matrices(
+    train: pd.DataFrame, valid: pd.DataFrame, features: list[str]
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    x_train = train.loc[:, features].copy()
+    x_valid = valid.loc[:, features].copy()
+    for col in CATEGORICAL:
+        categories = pd.Index(train[col].dropna().unique())
         x_train[col] = pd.Categorical(x_train[col], categories=categories)
         x_valid[col] = pd.Categorical(x_valid[col], categories=categories)
         if x_valid[col].isna().any():
-            raise ValueError(f"New category in validation: {col}")
+            raise ValueError(f"Unseen validation category: {col}")
     if list(x_train.columns) != features or list(x_valid.columns) != features:
-        raise ValueError("Predictor column order changed")
+        raise ValueError("Train/Valid feature ordering changed")
     return x_train, x_valid
 
 
-def calculate_rmsle(y_true, pred_log):
-    y_true = np.asarray(y_true, dtype=float)
-    pred_log = np.asarray(pred_log, dtype=float)
-    if not np.isfinite(pred_log).all():
-        raise ValueError("Nonfinite model predictions")
-    return float(np.sqrt(np.mean((np.log1p(y_true) - np.maximum(pred_log, 0)) ** 2)))
+def rmsle(y_true: pd.Series, predicted_log: np.ndarray) -> float:
+    y = np.asarray(y_true, dtype=float)
+    p = np.asarray(predicted_log, dtype=float)
+    if not np.isfinite(p).all():
+        raise ValueError("Nonfinite model prediction")
+    return float(np.sqrt(np.mean((np.log1p(y) - np.maximum(p, 0)) ** 2)))
 
 
-def write_json_atomic(path, obj):
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+def atomic_json(path: Path, record: dict) -> None:
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(record, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+    temp.replace(path)
 
 
-def write_csv_atomic(path, df):
-    tmp = path.with_name(path.name + ".tmp")
-    df.to_csv(tmp, index=False)
-    tmp.replace(path)
+def atomic_csv(path: Path, data: pd.DataFrame) -> None:
+    temp = path.with_name(path.name + ".tmp")
+    data.to_csv(temp, index=False)
+    temp.replace(path)
 
 
-def current_config(data_sources=None):
-    return {
-        "purpose": "Base23+lag364 baseline; four single-addition fixed-parameter experiments",
-        "feature_sets": FEATURE_SETS,
-        "folds": FOLDS,
-        "fixed_params": FIXED_PARAMS,
-        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
-        "target": "log1p(sales)",
-        "metric": "RMSLE on sales via clipping predicted log at zero",
-        "transactions_transform": "transactions_lag_16, not future-date transactions",
-        "sales_lag_transform": "existing add_lag_features; raw sales; shifts 16/28/364",
-        "main_preprocessing": "unchanged; main() supplies imputed raw oil and transactions",
-        "source_candidates": {"oil": list(OIL_SOURCE_CANDIDATES), "transactions": list(TRANSACTIONS_SOURCE_CANDIDATES)},
-        "data_sources": data_sources,
-        "optuna": False,
-        "submission": False,
-    }
+def data_sha256(df: pd.DataFrame) -> str:
+    cols = list(dict.fromkeys(
+        ["date", "sales", TARGET] +
+        [name for features in FEATURE_SETS.values() for name in features]
+    ))
+    hashes = pd.util.hash_pandas_object(
+        df.loc[:, cols], index=False
+    ).to_numpy()
+    return hashlib.sha256(hashes.tobytes()).hexdigest()
 
 
-def initialize_output(out_dir, sources, resume):
-    config_path = out_dir / "run_config.json"
-    config = current_config(sources)
-    if resume:
-        if not config_path.is_file():
-            raise FileNotFoundError(f"Cannot resume: {config_path} missing")
-        old = json.loads(config_path.read_text(encoding="utf-8"))
-        if old != config:
-            raise ValueError("Refusing to resume: config or source columns changed")
-    else:
-        out_dir.mkdir(parents=True, exist_ok=False)
-        write_json_atomic(config_path, config)
+SEARCH_SPACE = {
+    "learning_rate": [0.02, 0.08],
+    "num_leaves": [15, 31, 63, 127],
+    "min_child_samples": [20, 50, 100, 200],
+    "colsample_bytree": [0.7, 1.0],
+    "subsample": [0.7, 1.0],
+    "reg_alpha": [0.0, 0.1, 1.0, 5.0, 10.0],
+    "reg_lambda": [0.0, 0.1, 1.0, 5.0, 10.0],
+}
 
 
-def train_one(train_df, valid_df, features, fold_name):
-    x_train, x_valid = prepare_model_data(train_df, valid_df, features)
-    model = LGBMRegressor(**FIXED_PARAMS.copy())
-    print(f"[FIT] {fold_name}: train={len(train_df):,}, valid={len(valid_df):,}", flush=True)
-    model.fit(
-        x_train, train_df[TARGET_COL],
-        eval_set=[(x_valid, valid_df[TARGET_COL])],
-        eval_metric="rmse",
-        categorical_feature=CATEGORICAL_FEATURES,
-        callbacks=[early_stopping(EARLY_STOPPING_ROUNDS, verbose=True), log_evaluation(200)],
-    )
-    best_iteration = int(model.best_iteration_)
-    prediction = model.predict(x_valid, num_iteration=best_iteration)
-    score = calculate_rmsle(valid_df["sales"], prediction)
-    names = model.booster_.feature_name()
-    if names != features:
-        raise ValueError("Model booster feature order is not the specified order")
-    gain = model.booster_.feature_importance(importance_type="gain", iteration=best_iteration)
-    split = model.booster_.feature_importance(importance_type="split", iteration=best_iteration)
-    importance = pd.DataFrame({"feature": names, "gain": gain, "split": split})
-    del model, x_train, x_valid, prediction
+def suggest_params(trial):
+    result = {}
+    for name, values in SEARCH_SPACE.items():
+        if name == "learning_rate":
+            result[name] = trial.suggest_float(name, *values, log=True)
+        elif name in ("colsample_bytree", "subsample"):
+            result[name] = trial.suggest_float(name, *values)
+        else:
+            result[name] = trial.suggest_categorical(name, values)
+    return result
+
+
+def build_params(sampled, max_rounds, threads):
+    params = {**FIXED_PARAMS, **sampled}
+    params.update(n_estimators=max_rounds, n_jobs=threads)
+    params["subsample_freq"] = 1 if params["subsample"] < 1.0 else 0
+    return params
+
+
+def rounded_mean_iterations(records):
+    if len(records) != 3:
+        raise ValueError("Exactly three completed CV folds are required")
+    values = [r["best_iteration"] for r in records]
+    if any(not isinstance(v, int) or v < 1 for v in values):
+        raise ValueError("Invalid CV best_iteration")
+    return int(np.floor(np.mean(values) + 0.5))
+
+
+def evaluate_fold(df, split, params, folder, use_early_stopping, save_model=False):
+    """Reuse only exact configuration-matched results in this validated run."""
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = ("fold_" + split["name"].split()[-1]
+            if use_early_stopping else "august_2016_backtest")
+    path = folder / f"{stem}.json"
+    pred_path = folder / f"{stem}_predictions.csv"
+    model_path = folder / f"{stem}_model.txt"
+    expected = dict(experiment=EXPERIMENT, split=split, features=FEATURES,
+                    parameters=params, early_stopping_used=use_early_stopping)
+    if path.exists() and pred_path.exists() and (not save_model or model_path.exists()):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if any(record.get(k) != v for k, v in expected.items()):
+            raise ValueError(f"Incompatible cached result: {path}")
+        if (not np.isfinite(record["rmsle"])
+                or not 1 <= record["best_iteration"] <= params["n_estimators"]):
+            raise ValueError(f"Invalid cached metrics: {path}")
+        print(f"[CACHE] {split['name']}: RMSLE={record['rmsle']:.6f}", flush=True)
+        return record
+
+    train, valid = make_split(df, split)
+    x_train, x_valid = make_matrices(train, valid, FEATURES)
+    model = LGBMRegressor(**params)
+    fit_args = dict(categorical_feature=CATEGORICAL)
+    if use_early_stopping:
+        # New LightGBM releases expose eval_X/eval_y; older versions use eval_set.
+        if "eval_X" in inspect.signature(model.fit).parameters:
+            fit_args.update(eval_X=x_valid, eval_y=valid[TARGET])
+        else:
+            fit_args["eval_set"] = [(x_valid, valid[TARGET])]
+        fit_args.update(eval_metric="rmse", callbacks=[
+            early_stopping(EARLY_STOPPING_ROUNDS, verbose=True),
+            log_evaluation(500),
+        ])
+    print(f"[FIT] {split['name']}; train={len(train):,}; "
+          f"rounds={params['n_estimators']}; ES={use_early_stopping}", flush=True)
+    # Backtest receives neither evaluation labels nor early-stopping callbacks.
+    model.fit(x_train, train[TARGET], **fit_args)
+    best_iteration = (int(model.best_iteration_) if use_early_stopping
+                      else int(params["n_estimators"]))
+    if model.booster_.feature_name() != FEATURES:
+        raise ValueError("Unexpected fitted feature ordering")
+    pred_log = np.asarray(model.predict(x_valid, num_iteration=best_iteration))
+    score = rmsle(valid["sales"], pred_log)
+    predictions = valid[["date"] + KEYS + ["sales"]].copy()
+    predictions.rename(columns={"sales": "y_true"}, inplace=True)
+    predictions["pred_log_raw"] = pred_log
+    predictions["pred_sales"] = np.expm1(np.maximum(pred_log, 0))
+    if not np.isfinite(predictions["pred_sales"]).all():
+        raise ValueError("Nonfinite inverse-transformed predictions")
+    atomic_csv(pred_path, predictions)
+    importance = pd.DataFrame({
+        "feature": FEATURES,
+        "gain": model.booster_.feature_importance("gain", iteration=best_iteration),
+    }).sort_values("gain", ascending=False)
+    atomic_csv(folder / f"{stem}_importance.csv", importance)
+    if save_model:
+        temporary = model_path.with_suffix(".tmp")
+        model.booster_.save_model(str(temporary), num_iteration=best_iteration)
+        temporary.replace(model_path)
+    record = {**expected, "feature_count": len(FEATURES),
+              "train_rows": len(train), "valid_rows": len(valid),
+              "best_iteration": best_iteration, "rmsle": score,
+              "hit_iteration_cap": bool(use_early_stopping and best_iteration >= params["n_estimators"]),
+              "predictions_file": str(pred_path.resolve())}
+    atomic_json(path, record)
+    print(f"[RESULT] {split['name']}: RMSLE={score:.6f}, "
+          f"iterations={best_iteration}", flush=True)
+    del model, train, valid, x_train, x_valid, predictions, importance, pred_log
     gc.collect()
-    return best_iteration, score, importance
+    return record
 
 
-def run(df, out_dir):
-    print("\n[EXPERIMENT] Base23+lag364 / oil_raw / transactions_lag_16 / lag16 / lag28")
-    print("[CONTROL] same 3 folds, full training cutoff, target, params, seed, early stop")
-    print(f"[FITS] 5 configurations x 3 folds = 15 fits (barring resume skips)", flush=True)
-    for experiment, features in FEATURE_SETS.items():
-        exp_dir = out_dir / experiment
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        for fold in FOLDS:
-            number = int(fold["fold"].split()[-1])
-            fold_path = exp_dir / f"fold_{number}.json"
-            importance_path = exp_dir / f"importance_fold_{number}.csv"
-            if fold_path.exists() and importance_path.exists():
-                done = json.loads(fold_path.read_text(encoding="utf-8"))
-                if done.get("feature_names") != features or done.get("fold") != fold:
-                    raise ValueError(f"Mismatch in existing result: {fold_path}")
-                print(f"[SKIP] {experiment} {fold['fold']} already completed", flush=True)
-                continue
-            if fold_path.exists() or importance_path.exists():
-                raise ValueError(f"Partial/mismatched saved pair for {experiment}/{fold['fold']}")
-            print("\n" + "=" * 76)
-            print(f"[START] {experiment}, {fold['fold']} | feature_count={len(features)}")
-            print(f"[CHANGED] {features[24:] if len(features) > 24 else 'baseline only'}")
-            print("=" * 76, flush=True)
-            tr, va = make_fold(df, fold)
-            best_iteration, rmsle, importance = train_one(tr, va, features, fold["fold"])
-            result = {
-                "experiment": experiment, "fold": fold, "feature_names": features,
-                "feature_count": len(features), "train_rows": int(len(tr)),
-                "valid_rows": int(len(va)), "best_iteration": best_iteration,
-                "rmsle": rmsle,
-            }
-            write_csv_atomic(importance_path, importance)
-            write_json_atomic(fold_path, result)
-            write_current_summary(out_dir)
-            print(f"[DONE] {experiment}/{fold['fold']}: RMSLE={rmsle:.6f} | best_iteration={best_iteration}", flush=True)
-            del tr, va
-            gc.collect()
-        write_current_summary(out_dir)
-    write_current_summary(out_dir)
-    print(f"\n[FINISHED] Results saved: {out_dir.resolve()}", flush=True)
+def cache_folder(out, params):
+    key = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:20]
+    return out / "cv_cache" / key
 
 
-def write_current_summary(out_dir):
-    rows = []
-    for exp, features in FEATURE_SETS.items():
-        for fold in FOLDS:
-            p = out_dir / exp / f"fold_{int(fold['fold'].split()[-1])}.json"
-            if not p.is_file():
-                continue
-            r = json.loads(p.read_text(encoding="utf-8"))
-            if r["feature_names"] != features or r["fold"] != fold:
-                raise ValueError(f"Saved experiment mismatch: {p}")
-            rows.append({
-                "experiment": exp, "fold": fold["fold"], "features": len(features),
-                "train_end": fold["train_end"], "valid_start": fold["valid_start"],
-                "valid_end": fold["valid_end"], "rmsle": r["rmsle"],
-                "best_iteration": r["best_iteration"], "valid_rows": r["valid_rows"],
-            })
-    if not rows:
+def source_fingerprints():
+    paths = [Path(__file__).resolve(), ROOT / "src" / "main.py",
+             ROOT / "src" / "feature_engineering.py"]
+    return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+
+
+def run(args):
+    if args.n_trials < 1 or args.max_rounds < 1 or args.threads == 0:
+        raise ValueError("Positive trial/round counts and nonzero threads required")
+    os.chdir(ROOT)
+    loaded = main()
+    if not isinstance(loaded, (list, tuple)) or len(loaded) != 3:
+        raise ValueError("Expected main() -> (train, test, holidays)")
+    raw, test, holidays = loaded
+    del loaded, test, holidays
+    df = prepare_features(raw)
+    del raw
+    gc.collect()
+    for split in CV_FOLDS + [AUGUST_BACKTEST]:
+        train, valid = make_split(df, split)
+        print(f"[QC] {split['name']}: {len(train):,} / {len(valid):,}")
+        del train, valid
+    if args.check_only:
+        print("[CHECK ONLY] Passed. No training or study creation.")
         return
-    results = pd.DataFrame(rows)
-    write_csv_atomic(out_dir / "fold_results_partial.csv", results)
-    summary = (results.groupby("experiment", sort=False)
-               .agg(folds_completed=("fold", "count"), mean_rmsle=("rmsle", "mean"),
-                    min_rmsle=("rmsle", "min"), max_rmsle=("rmsle", "max"),
-                    median_best_iteration=("best_iteration", "median"))
-               .reset_index())
-    summary["fold_gap_max_minus_min"] = summary["max_rmsle"] - summary["min_rmsle"]
-    stds = results.groupby("experiment")["rmsle"].std(ddof=1)
-    summary["std_rmsle_ddof1"] = summary["experiment"].map(stds)
-    baseline = summary.loc[summary["experiment"] == "base23_lag364"]
-    if len(baseline) and int(baseline.iloc[0]["folds_completed"]) == 3:
-        ref = float(baseline.iloc[0]["mean_rmsle"])
-        summary["delta_vs_base23_lag364"] = summary["mean_rmsle"] - ref
-        summary.loc[summary["folds_completed"] != 3, "delta_vs_base23_lag364"] = np.nan
+    config = dict(
+        schema_version=1, experiment=EXPERIMENT, features=FEATURES,
+        folds=CV_FOLDS, backtest=AUGUST_BACKTEST,
+        fixed_params=build_params({}, args.max_rounds, args.threads),
+        search_space=SEARCH_SPACE, early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+        objective="mean of 3-fold RMSLE, predictions clipped at zero in log space",
+        early_stopping_metric="unclipped log-space RMSE (original pipeline)",
+        backtest_rule="round(mean(best trial's 3 CV best_iterations)); no ES",
+        data_sha256=data_sha256(df), source_sha256=source_fingerprints(),
+        versions={"lightgbm": lightgbm.__version__, "optuna": optuna.__version__,
+                  "pandas": pd.__version__, "numpy": np.__version__},
+        save_models=args.save_models,
+    )
+    if args.run_dir:
+        out = args.run_dir.expanduser().resolve()
+        prior = json.loads((out / "run_config.json").read_text(encoding="utf-8"))
+        if prior != config:
+            raise ValueError("Resume rejected: data/code/settings/package versions differ")
     else:
-        summary["delta_vs_base23_lag364"] = np.nan
-    write_csv_atomic(out_dir / "summary_partial.csv", summary)
-    if (len(summary) == len(FEATURE_SETS) and summary["folds_completed"].eq(3).all()):
-        write_csv_atomic(out_dir / "ablation_summary.csv", summary)
-        write_csv_atomic(out_dir / "ablation_fold_results.csv", results)
-    print("\n[PROGRESS]\n" + summary.to_string(index=False), flush=True)
+        out = OUTPUT_ROOT / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        out.mkdir(parents=True, exist_ok=False)
+        atomic_json(out / "run_config.json", config)
+    print(f"[OUTPUT] {out}", flush=True)
+    print("[NOTE] 2016 backtest is diagnostic: parameters/rounds selected in 2017.")
+    study = optuna.create_study(
+        study_name=EXPERIMENT, direction="minimize",
+        storage="sqlite:///" + (out / "study.db").as_posix(),
+        load_if_exists=True, sampler=optuna.samplers.TPESampler(seed=42),
+        pruner=optuna.pruners.NopPruner(),
+    )
+    # Change the RNG stream on resume; SQLite restores history, not sampler RNG state.
+    study.sampler = optuna.samplers.TPESampler(seed=42 + len(study.trials), n_startup_trials=5)
+    if not study.trials:
+        study.enqueue_trial({k: FIXED_PARAMS[k] for k in SEARCH_SPACE},
+                            user_attrs={"role": "original_fixed_baseline"})
+
+    def objective(trial):
+        params = build_params(suggest_params(trial), args.max_rounds, args.threads)
+        folder = cache_folder(out, params)
+        trial.set_user_attr("cache_folder", str(folder.resolve()))
+        trial.set_user_attr("full_params", params)
+        records = []
+        for split in CV_FOLDS:
+            records.append(evaluate_fold(df, split, params, folder, True, args.save_models))
+            trial.set_user_attr("fold_records", records)
+        mean_score = float(np.mean([r["rmsle"] for r in records]))
+        trial.set_user_attr("backtest_n_estimators", rounded_mean_iterations(records))
+        return mean_score
+
+    def checkpoint(study, trial):
+        atomic_csv(out / "trials.csv", study.trials_dataframe())
+
+    completed = sum(t.state == optuna.trial.TrialState.COMPLETE for t in study.trials)
+    remaining = max(0, args.n_trials - completed)
+    print(f"[STUDY] completed={completed}; additional trials={remaining}", flush=True)
+    if remaining:
+        # Sequential trials limit memory use; LightGBM uses args.threads internally.
+        study.optimize(objective, n_trials=remaining, n_jobs=1,
+                       callbacks=[checkpoint], gc_after_trial=True)
+    best = study.best_trial
+    params = best.user_attrs["full_params"]
+    records = best.user_attrs["fold_records"]
+    fixed_n = rounded_mean_iterations(records)
+    scores = [r["rmsle"] for r in records]
+    iterations = [r["best_iteration"] for r in records]
+    best_out = out / f"best_trial_{best.number:04d}"
+    best_out.mkdir(exist_ok=True)
+    result = dict(experiment=EXPERIMENT, feature_count=25, features=FEATURES,
+                  best_trial_number=best.number, best_params=best.params,
+                  full_cv_params=params, mean_3fold=float(np.mean(scores)),
+                  std_3fold_ddof1=float(np.std(scores, ddof=1)),
+                  mean_fold23=float(np.mean(scores[1:])),
+                  cv_best_iterations=iterations, mean_best_iteration=float(np.mean(iterations)),
+                  backtest_n_estimators=fixed_n,
+                  final_training_params={**params, "n_estimators": fixed_n},
+                  best_trial_cache=best.user_attrs["cache_folder"],
+                  backtest_note="Diagnostic: parameters/iterations selected with 2017 CV; no 2016 ES.")
+    atomic_json(out / "best_params.json", result)
+    atomic_json(best_out / "best_params.json", result)
+    cv_rows = [{"fold": r["split"]["name"], "rmsle": r["rmsle"],
+                "best_iteration": r["best_iteration"],
+                "hit_iteration_cap": r["hit_iteration_cap"],
+                "predictions_file": r["predictions_file"]} for r in records]
+    atomic_csv(out / "cv_fold_results.csv", pd.DataFrame(cv_rows))
+    summary = {k: result[k] for k in ("experiment", "best_trial_number", "mean_3fold",
+                                    "std_3fold_ddof1", "mean_fold23", "mean_best_iteration",
+                                    "backtest_n_estimators")}
+    for i, r in enumerate(records, 1):
+        summary[f"fold_{i}_rmsle"] = r["rmsle"]
+        summary[f"fold_{i}_best_iteration"] = r["best_iteration"]
+    atomic_csv(out / "cv_summary.csv", pd.DataFrame([summary]))
+    print("[BEST CV]\n" + pd.DataFrame(cv_rows).to_string(index=False), flush=True)
+    print(f"[ITERATIONS] {iterations} -> mean={np.mean(iterations):.3f} -> {fixed_n}")
+    if any(r["hit_iteration_cap"] for r in records):
+        print("[NOTE] A best fold reached max-rounds; its optimum may exceed the cap.")
+    if not args.skip_backtest:
+        backtest = evaluate_fold(df, AUGUST_BACKTEST,
+                                 {**params, "n_estimators": fixed_n},
+                                 best_out, False, args.save_models)
+        backtest.update(fold_best_iterations=iterations,
+                        iteration_rule="rounded arithmetic mean of selected trial's 3 CV best_iterations",
+                        evaluation_type=result["backtest_note"])
+        atomic_json(best_out / "august_2016_backtest.json", backtest)
+        summary["august_2016_backtest_rmsle"] = backtest["rmsle"]
+    else:
+        summary["august_2016_backtest_rmsle"] = None
+    atomic_csv(out / "comparison_summary.csv", pd.DataFrame([summary]))
+    atomic_csv(out / "trials.csv", study.trials_dataframe())
+    print("[SUMMARY]\n" + pd.DataFrame([summary]).to_string(index=False))
+    print(f"[FINISHED] {out}", flush=True)
 
 
 def cli():
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--check-only", action="store_true", help="Prepare/validate pipeline only, no training")
-    p.add_argument("--run-dir", type=Path, default=None, help="Resume an existing timestamped results folder")
-    a = p.parse_args()
-    if a.check_only and a.run_dir is not None:
-        p.error("--check-only cannot be combined with --run-dir")
-    validate_configuration()
-    train, test, holidays = main()
-    del test, holidays
-    gc.collect()
-    train, sources = prepare_features(train)
-    for fold in FOLDS:
-        make_fold(train, fold)
-    print("[PREFLIGHT PASS] all required source columns, lags, validation panels are valid", flush=True)
-    if a.check_only:
-        return
-    if a.run_dir is None:
-        out = OUTPUT_ROOT / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        initialize_output(out, sources, resume=False)
-    else:
-        out = a.run_dir.expanduser().resolve()
-        initialize_output(out, sources, resume=True)
-    print(f"[RESULT FOLDER] {out.resolve()}", flush=True)
-    run(train, out)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--n-trials", type=int, default=20,
+                        help="Target total completed trials, including baseline (default 20).")
+    parser.add_argument("--max-rounds", type=int, default=8000)
+    parser.add_argument("--threads", type=int, default=-1)
+    parser.add_argument("--run-dir", type=Path, help="Resume an existing compatible run directory.")
+    parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--skip-backtest", action="store_true")
+    parser.add_argument("--save-models", action="store_true",
+                        help="Also save every fitted model; potentially substantial disk usage.")
+    run(parser.parse_args())
 
 
 if __name__ == "__main__":

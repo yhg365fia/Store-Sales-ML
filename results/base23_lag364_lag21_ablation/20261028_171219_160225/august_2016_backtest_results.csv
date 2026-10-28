@@ -1,0 +1,3 @@
+experiment,feature_count,train_end,valid_start,valid_end,train_rows,valid_rows,fold_1_best_iteration,fold_2_best_iteration,fold_3_best_iteration,mean_fold_best_iteration,fixed_n_estimators,early_stopping_used,rmsle
+base23_lag364_lag21,25,2016-08-15,2016-08-16,2016-08-31,2357586,28512,5418,3036,5611,4688.333333333333,4688,False,0.7540894979112459
+base23_lag364_lag21_lag28,26,2016-08-15,2016-08-16,2016-08-31,2357586,28512,3445,4014,2966,3475.0,3475,False,0.7618667255763446

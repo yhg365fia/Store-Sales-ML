@@ -1,0 +1,12 @@
+{
+  "experiment": "base23_lag364_lag28",
+  "feature_count": 25,
+  "train_end": "2016-08-15",
+  "valid_start": "2016-08-16",
+  "valid_end": "2016-08-31",
+  "train_rows": 2357586,
+  "valid_rows": 28512,
+  "mode": "early_stop",
+  "best_iteration": 5420,
+  "rmsle": 0.76329207347494
+}

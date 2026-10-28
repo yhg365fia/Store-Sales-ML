@@ -1,0 +1,4 @@
+experiment,feature_count,rmsle,best_iteration,mode,delta_vs_base
+base23_lag364_lag28,25,0.76329207347494,5420,early_stop,0.0
+add_transactions_lag16,26,0.7672032680201877,3650,early_stop,0.003911194545247687
+add_oil_raw,26,0.7421667466075839,5251,early_stop,-0.02112532686735613
