@@ -1,0 +1,9 @@
+model,split,rmsle,best_iteration,trained_trees,train_rows,valid_rows,predictions_file
+lgbm,Fold 1,0.3789663835830142,5474.0,5474,2922480,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\lgbm\d4f23082fe822b611415\predictions.csv
+catboost,Fold 1,0.412162831360203,,1000,2922480,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\catboost\ef12534d341c9cd8535d\predictions.csv
+lgbm,Fold 2,0.39930025427790566,6839.0,6839,2950992,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\lgbm\ef7a2efa2db12fae821a\predictions.csv
+catboost,Fold 2,0.42942647203752726,,1000,2950992,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\catboost\f30b31b50d19ecb0987c\predictions.csv
+lgbm,Fold 3,0.39398831278698276,7996.0,7996,2979504,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\lgbm\3357c740f53fd64fa090\predictions.csv
+catboost,Fold 3,0.4601200147456955,,1000,2979504,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\catboost\152cf72964534f5ed72a\predictions.csv
+lgbm,August 2016 Backtest,0.7473656293230572,6853.0,6853,2357586,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\lgbm\27777f79a27a3fbe94d3\predictions.csv
+catboost,August 2016 Backtest,0.7915116938540879,,1000,2357586,28512,C:\projects\Store Sales-ML\results\lgbm_catboost_cv_backtest\cache\catboost\2594ae6cee1b2255362a\predictions.csv

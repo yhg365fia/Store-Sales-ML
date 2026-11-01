@@ -1,0 +1,52 @@
+[
+  {
+    "file": "trial17_best_params.json",
+    "source": "results/base23_lag364_lag28_optuna/20261028_182041_683679/best_params.json",
+    "sha256": "8c9e089cb50b1e92f209a4d6e3d90621236c8bd0ca0e158af2d098ce4d63d245"
+  },
+  {
+    "file": "rf_cv_blends.csv",
+    "source": "results/lgbm_rf_blend/reports/20261029_191200_785304/blend_scores.csv",
+    "sha256": "905301611f85955c8b72d69f35d5014cba71a55a292bb6201b42c46eb925926c"
+  },
+  {
+    "file": "rf_cv_models.csv",
+    "source": "results/lgbm_rf_blend/reports/20261029_191200_785304/model_fold_scores.csv",
+    "sha256": "c43a228cd275839c7409db098703cf612f19a40472ff26e2b86cef88cca95e26"
+  },
+  {
+    "file": "rf_backtest_blends.csv",
+    "source": "results/lgbm_rf_backtest_2016/reports/20261029_201542_363103/blend_scores.csv",
+    "sha256": "1e2bc92bee903e20a043edc8537cba80da4d828aec69d7e72208f01beb5480d4"
+  },
+  {
+    "file": "catboost_baseline_blends.csv",
+    "source": "results/lgbm_catboost_cv_backtest/reports/20261029_230521_456880/blend_scores.csv",
+    "sha256": "827aec438f405f193a9ae1f35c3c84cead4c0ce064607a7964e05790483d50a5"
+  },
+  {
+    "file": "catboost_baseline_models.csv",
+    "source": "results/lgbm_catboost_cv_backtest/reports/20261029_230521_456880/model_scores.csv",
+    "sha256": "8a4ba18e6363e7923af0caed427259d6c0c756100380366c72ddea12aae4c022"
+  },
+  {
+    "file": "trial17_fixed_backtest.json",
+    "source": "results/base23_lag364_lag28_optuna/20261028_182041_683679/best_trial_0017/august_2016_backtest.json",
+    "sha256": "5e788a9e7d9f07b38147eb3d696edd3d4c61cb9ceaba33dea907610b7e80e9d7"
+  },
+  {
+    "file": "trial17_fold_1.json",
+    "source": "results/base23_lag364_lag28_optuna/20261028_182041_683679/cv_cache/07590e4e8d7e52dbe5a3/fold_1.json",
+    "sha256": "ec7f9006377bf72bde4c7ac158d1b9078636100ceae7acfa50f449e1aec26b8f"
+  },
+  {
+    "file": "trial17_fold_2.json",
+    "source": "results/base23_lag364_lag28_optuna/20261028_182041_683679/cv_cache/07590e4e8d7e52dbe5a3/fold_2.json",
+    "sha256": "e69b77d4274f2f4839586e9a34fd6b0107183f9ced576ee3b4b44e71a3588a1a"
+  },
+  {
+    "file": "trial17_fold_3.json",
+    "source": "results/base23_lag364_lag28_optuna/20261028_182041_683679/cv_cache/07590e4e8d7e52dbe5a3/fold_3.json",
+    "sha256": "68e31c3aa130c35b615131d9017289263fd64c18c76dec03ceb37ef3f7c09f48"
+  }
+]

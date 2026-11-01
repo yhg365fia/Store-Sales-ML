@@ -1,0 +1,31 @@
+{
+  "source_sha256": {
+    "C:\\projects\\Store Sales-ML\\src\\backtest.py": "4b90b12608bc305854b69b17d23e2c90148fe30cc6b9cbccdbe71d30b26aa51a",
+    "C:\\projects\\Store Sales-ML\\src\\evaluation.py": "9bb63722eeb795eccfacf6fa47adb5d470f86c52e15d807859293064ef35303d",
+    "C:\\projects\\Store Sales-ML\\src\\experiment.py": "22d597211d86858fd0cadc531ea096f4df62b95a027dd8d714500214403e0551",
+    "C:\\projects\\Store Sales-ML\\src\\feature_engineering.py": "e6c79ceb5ba220997112991ec522dba495fd7d340e5485ada721e2060e0fe2f2",
+    "C:\\projects\\Store Sales-ML\\src\\final submission.py": "252d3bc9a94543ba0085e641fb1d8b3b549e8f1de3de06cbcbb3e3ad098939af",
+    "C:\\projects\\Store Sales-ML\\src\\main.py": "faec4b60e1437b57b8dc9642eb293784e7f6d5f6f2b7cc1ddc99bb8e4ddcf287",
+    "C:\\projects\\Store Sales-ML\\src\\modeling.py": "25ec36371148a3f3ea47411ccf84caad3786a7085a667866de5f4597161a96bc",
+    "C:\\projects\\Store Sales-ML\\src\\preprocessing.py": "5772c519d48a1ebde9b19b9db231845ee067c2d7e94e32155f75711634ad7cc7"
+  },
+  "data_sha256": {
+    "holidays_events.csv": "81a183d6c4d691b57f84a0fde6bbf734a5b3c36a74b97378bf33a592648e2999",
+    "oil.csv": "944b23b857580f9d804399346fd3ed69bffcb7facfd98c55fdb408b8d057cca7",
+    "sample_submission.csv": "17505ec561d9bc64a3c10c3eb00474becf162d9053cebf014a58a6c82ed530c4",
+    "stores.csv": "af503b2bce11d7906d249f81cc0598f10e2addcc9f6c59aa2d95c9f2652c296b",
+    "test.csv": "087ec1ecec76dbba9ea2adb48b8b2fd527c7c59adb82b0dfb9f6f82739400d26",
+    "train.csv": "99a1b7f4241821df10fa71f23abdd71c634f71f901e3cab1400c0f0c583f862c",
+    "transactions.csv": "e116384a6981af74932832436aa2f6a43121f77ca81accc44e3a5160158ca03c"
+  },
+  "candidate_metadata": "C:\\projects\\Store Sales-ML\\submissions\\submission_base23_lag364_lag28_optuna_trial17_fulltrain_iter7418_20261029_182655_492521.json",
+  "candidate_csv_sha256": "df06105fcc44c6a75aca230f2d7d8bd76581fbb2d2d6e43ba3ddf9250c04df60",
+  "versions": {
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+    "pandas": "3.1.0",
+    "numpy": "2.5.4",
+    "lightgbm": "4.7.0"
+  },
+  "source_project": "C:\\projects\\Store Sales-ML",
+  "snapshot": "C:\\Users\\gey82\\OneDrive\\문서\\ChatGPT\\판매량 시계열 캐글\\audit_outputs\\source_snapshot"
+}
