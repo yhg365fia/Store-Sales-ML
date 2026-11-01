@@ -1,5 +1,7 @@
 # Day13
 
+> **2026-11-01 상태 대조:** 본문은 해당 일자의 판단·느낀 점을 보존한 회고다. 이후 확인된 결과와 현재 할 일은 [실험 기록의 현재 상태](../5.%20Experiments.md#현재-상태-한눈에-보기)를 우선한다. 당시 ‘미확인·다음’ 항목을 실제 미실행으로 간주해 반복하지 않는다.
+
 ## 오늘 한 일
 
 Kaggle Store Sales - Time Series Forecasting **외부 데이터 전처리 검증, Transactions·Oil 피처 5종 실험 구성, Oil Raw 베이스라인 확정 및 Kaggle 제출 코드 수정**
@@ -163,6 +165,8 @@ ValueError: Oil Raw(dcoilwtico)에 결측/무한대가 있습니다.
 ---
 
 ## 다음
+
+> **후속 확인:** 외부 5종의 [저장 요약](../../results/external_features_5exp/20261021_190525_244163/score_summary.csv)을 확보했다. Oil Raw 평균 **0.393282**, 나머지 네 구성은 과거 Payday 기준 평균보다 악화됐다. 아래 계획은 당시 계획이며 이후 튜닝·제출까지 진행됐다. 원래 수치를 복구하기 위해 재학습할 필요는 없다.
 
 1. **최종 제출 코드 실행 및 데이터 QC**
    - Train/Test의 `dcoilwtico` 결측 개수와 날짜별 병합 결과 확인.
