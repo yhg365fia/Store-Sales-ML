@@ -1,0 +1,14 @@
+[
+  {
+    "fold": 1,
+    "best_iteration": 4277
+  },
+  {
+    "fold": 2,
+    "best_iteration": 4815
+  },
+  {
+    "fold": 3,
+    "best_iteration": 5895
+  }
+]

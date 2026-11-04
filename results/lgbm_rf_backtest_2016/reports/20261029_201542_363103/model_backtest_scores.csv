@@ -1,0 +1,3 @@
+model,split,rmsle,best_iteration,train_rows,valid_rows,predictions_file
+lgbm,August 2016 Backtest,0.7473656293230572,6853.0,2357586,28512,C:\projects\Store Sales-ML\results\lgbm_rf_backtest_2016\cache\lgbm\a035e6c2a0f71d6c02b2\predictions.csv
+rf,August 2016 Backtest,0.8078972419772212,,2357586,28512,C:\projects\Store Sales-ML\results\lgbm_rf_backtest_2016\cache\rf\4caa679b5db56ceb3b0d\predictions.csv

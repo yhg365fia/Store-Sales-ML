@@ -1,0 +1,23 @@
+[
+  {
+    "fold": 1,
+    "model": "A_group1",
+    "best_iteration": 1992,
+    "training_rows": 619920,
+    "validation_rows": 6048
+  },
+  {
+    "fold": 2,
+    "model": "A_group1",
+    "best_iteration": 1847,
+    "training_rows": 625968,
+    "validation_rows": 6048
+  },
+  {
+    "fold": 3,
+    "model": "A_group1",
+    "best_iteration": 1851,
+    "training_rows": 632016,
+    "validation_rows": 6048
+  }
+]

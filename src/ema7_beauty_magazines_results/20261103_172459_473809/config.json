@@ -1,0 +1,39 @@
+{
+  "groups": {
+    "1": [
+      "HARDWARE",
+      "HOME APPLIANCES",
+      "LAWN AND GARDEN",
+      "LIQUOR,WINE,BEER",
+      "SCHOOL AND OFFICE SUPPLIES"
+    ],
+    "2": [
+      "AUTOMOTIVE",
+      "CELEBRATION",
+      "HOME AND KITCHEN II",
+      "PET SUPPLIES",
+      "PLAYERS AND ELECTRONICS",
+      "SEAFOOD"
+    ],
+    "4": [
+      "LINGERIE",
+      "LADIESWEAR",
+      "HOME AND KITCHEN I",
+      "GROCERY II",
+      "MAGAZINES",
+      "BEAUTY"
+    ]
+  },
+  "sources": {
+    "fold1": "C:\\projects\\Store Sales-ML\\results\\group1_lag16_ema7_mix\\20261102_214811_779601\\fold_1_predictions.csv",
+    "fold2": "C:\\projects\\Store Sales-ML\\results\\group1_lag16_ema7_mix\\20261102_214811_779601\\fold_2_predictions.csv",
+    "fold3": "C:\\projects\\Store Sales-ML\\results\\group1_lag16_ema7_mix\\20261102_214811_779601\\fold_3_predictions.csv",
+    "backtest": "C:\\projects\\Store Sales-ML\\src\\backtest_outputs\\20261103_155940_882756\\predictions.csv"
+  },
+  "oil": false,
+  "training_performed": false,
+  "metric": "RMSLE primary; raw sales RMSE also reported",
+  "rule": "Only BEAUTY additionally switched from EMA to Trial17; MAGAZINES remains Trial17",
+  "training_mask": "Saved model still trained with original seven-family mask; no masking change",
+  "note": "Exploratory reused validation. Every comparison uses identical new group membership; CV means exclude backtest."
+}

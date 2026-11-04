@@ -1,0 +1,20 @@
+{
+  "input": "C:\\projects\\Store Sales-ML\\src\\backtest_outputs\\20261103_155940_882756\\predictions.csv",
+  "candidate": "ema7_oil",
+  "baseline": "Trial17 cached August 2016 backtest",
+  "training_performed": false,
+  "definitions": {
+    "log_error": "log1p(prediction)-log1p(actual); positive=overprediction",
+    "delta": "candidate minus baseline; negative error delta=improvement",
+    "sse_log": "sum of squared log errors (additive across partitions)",
+    "overall_msle_contribution": "delta_sse_log / all 28512 rows; NOT an RMSLE contribution",
+    "under_over_sse": "each model classified by its own residual sign; inspect transitions too",
+    "baseline_direction": "fixed rows classified by baseline sign for paired comparison",
+    "sales_bias": "sum(predicted sales - actual sales); not the competition metric"
+  },
+  "limitations": [
+    "No surge/drop/volatility labels: these require pre-cutoff sales history.",
+    "Different candidate iteration counts; comparison is of complete configurations.",
+    "2017-selected settings evaluated retrospectively on 2016; descriptive diagnostic."
+  ]
+}

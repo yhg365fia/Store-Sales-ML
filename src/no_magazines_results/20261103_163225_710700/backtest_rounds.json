@@ -1,0 +1,18 @@
+{
+  "rounds": 4551,
+  "rule": "mean3",
+  "iterations": [
+    {
+      "fold": 1,
+      "best_iteration": 3588
+    },
+    {
+      "fold": 2,
+      "best_iteration": 4999
+    },
+    {
+      "fold": 3,
+      "best_iteration": 5067
+    }
+  ]
+}

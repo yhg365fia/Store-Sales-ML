@@ -1,0 +1,5 @@
+﻿family,numeric_candidate,group3_condition,group1_condition,group2_condition,reason
+GROCERY II,판단 보류,False,False,False,"3번: 전체 RMSLE를 초과한 Fold=1,2,3 / 1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음 / 2번: 하위50% 미충족 Fold=1,2; 급변 Fold=; 비율 미확인 Fold="
+LINGERIE,판단 보류,False,False,False,"3번: 전체 RMSLE를 초과한 Fold=1,2,3 / 1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음 / 2번: 하위50% 미충족 Fold=1,2,3; 급변 Fold=; 비율 미확인 Fold="
+HOME AND KITCHEN I,판단 보류,False,False,False,"3번: 전체 RMSLE를 초과한 Fold=1,2,3 / 1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음 / 2번: 하위50% 미충족 Fold=1,2,3; 급변 Fold=; 비율 미확인 Fold="
+LADIESWEAR,판단 보류,False,False,False,"3번: 전체 RMSLE를 초과한 Fold=1,2,3 / 1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음 / 2번: 하위50% 미충족 Fold=1,2,3; 급변 Fold=; 비율 미확인 Fold="

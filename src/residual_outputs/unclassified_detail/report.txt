@@ -1,0 +1,60 @@
+보류 4개 품목 상세 진단
+상품 SKU 수는 데이터로 확인할 수 없음. 매장 수/관측 수/판매 수량을 별도로 출력.
+판매 변동은 전체 매장 일별 합계, RMSLE는 매장별 관측 행으로 계산.
+통계는 각 Fold 시작 전 1년. 최근 비율은 직전 7일 / 그 이전 28일.
+사분위는 전체 품목 기준. 누락 날짜는 0으로 채우지 않음.
+판정 순서: 3번 → 1번 → 2번. 수동 확인 이전의 수치 후보만 판정.
+전체 판매 추이 그래프는 사후 진단용이며 검증 이후 정보도 포함됨.
+
+
+[GROCERY II] 판단 보류
+3번: 전체 RMSLE를 초과한 Fold=1,2,3
+1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음
+2번: 하위50% 미충족 Fold=1,2; 급변 Fold=; 비율 미확인 Fold=
+    family  fold     cutoff validation_start validation_end  volatility    q50    q75  high_volatility  low_volatility  recent_7d_mean  preceding_28d_mean  recent_ratio  ratio_valid  recent_abrupt  family_rmsle  fold_rmsle  well_predicted  validation_actual  validation_predicted  validation_shortfall
+GROCERY II     1 2017-06-28       2017-06-29     2017-07-14      0.1795 0.1710 0.2116            False           False       1510.8571           1598.8929        0.9449         True          False        0.5877      0.3790           False            25992.0            20736.5249             5255.4751
+GROCERY II     2 2017-07-14       2017-07-15     2017-07-30      0.1770 0.1671 0.2100            False           False       1638.0000           1610.2857        1.0172         True          False        0.7627      0.3993           False            32939.0            18843.1978            14095.8022
+GROCERY II     3 2017-07-30       2017-07-31     2017-08-15      0.1703 0.1703 0.2070            False            True       2133.8571           1708.7500        1.2488         True          False        0.5544      0.3940           False            25031.0            22633.1242             2397.8758
+    family  fold history_start     cutoff  stores  observations  observed_days  missing_days  zero_sales_row_pct  total_sales  daily_mean  daily_median  daily_std  daily_min  daily_max  daily_p10  daily_p90  daily_p90_p10  mean_abs_daily_change  max_abs_daily_change
+GROCERY II     1    2016-06-29 2017-06-28      54         19656            364             1               8.501     439199.0    1206.591        1096.0    506.995       17.0     4436.0      799.0     1697.9          898.9                222.434                4419.0
+GROCERY II     2    2016-07-15 2017-07-14      54         19656            364             1               8.272     448506.0    1232.159        1116.0    514.473       17.0     4436.0      816.1     1791.2          975.1                229.028                4419.0
+GROCERY II     3    2016-07-31 2017-07-30      54         19656            364             1               7.301     472601.0    1298.354        1167.5    524.614       17.0     4436.0      858.3     1880.7         1022.4                238.354                4419.0
+
+[LINGERIE] 판단 보류
+3번: 전체 RMSLE를 초과한 Fold=1,2,3
+1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음
+2번: 하위50% 미충족 Fold=1,2,3; 급변 Fold=; 비율 미확인 Fold=
+  family  fold     cutoff validation_start validation_end  volatility    q50    q75  high_volatility  low_volatility  recent_7d_mean  preceding_28d_mean  recent_ratio  ratio_valid  recent_abrupt  family_rmsle  fold_rmsle  well_predicted  validation_actual  validation_predicted  validation_shortfall
+LINGERIE     1 2017-06-28       2017-06-29     2017-07-14      0.1758 0.1710 0.2116            False           False        351.1429            368.1071        0.9539         True          False        0.6111      0.3790           False             5947.0             4918.4274             1028.5726
+LINGERIE     2 2017-07-14       2017-07-15     2017-07-30      0.1758 0.1671 0.2100            False           False        343.8571            368.8929        0.9321         True          False        0.6352      0.3993           False             5375.0             4985.1096              389.8904
+LINGERIE     3 2017-07-30       2017-07-31     2017-08-15      0.1734 0.1703 0.2070            False           False        318.7143            357.5000        0.8915         True          False        0.6168      0.3940           False             6716.0             6153.4579              562.5421
+  family  fold history_start     cutoff  stores  observations  observed_days  missing_days  zero_sales_row_pct  total_sales  daily_mean  daily_median  daily_std  daily_min  daily_max  daily_p10  daily_p90  daily_p90_p10  mean_abs_daily_change  max_abs_daily_change
+LINGERIE     1    2016-06-29 2017-06-28      54         19656            364             1              12.953     126196.0     346.692         332.5     89.680        3.0      748.0      244.3      463.0          218.7                 62.536                 552.0
+LINGERIE     2    2016-07-15 2017-07-14      54         19656            364             1              12.500     128144.0     352.044         338.0     87.880        3.0      748.0      253.1      466.4          213.3                 62.398                 552.0
+LINGERIE     3    2016-07-31 2017-07-30      54         19656            364             1              12.190     129515.0     355.810         345.0     85.454        3.0      748.0      264.0      466.4          202.4                 61.818                 552.0
+
+[HOME AND KITCHEN I] 판단 보류
+3번: 전체 RMSLE를 초과한 Fold=1,2,3
+1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음
+2번: 하위50% 미충족 Fold=1,2,3; 급변 Fold=; 비율 미확인 Fold=
+            family  fold     cutoff validation_start validation_end  volatility    q50    q75  high_volatility  low_volatility  recent_7d_mean  preceding_28d_mean  recent_ratio  ratio_valid  recent_abrupt  family_rmsle  fold_rmsle  well_predicted  validation_actual  validation_predicted  validation_shortfall
+HOME AND KITCHEN I     1 2017-06-28       2017-06-29     2017-07-14      0.2082 0.1710 0.2116            False           False       1649.4286           1849.9643        0.8916         True          False        0.4552      0.3790           False            28255.0            30839.7271            -2584.7271
+HOME AND KITCHEN I     2 2017-07-14       2017-07-15     2017-07-30      0.1973 0.1671 0.2100            False           False       1696.5714           1862.1071        0.9111         True          False        0.4378      0.3993           False            26341.0            27293.9550             -952.9550
+HOME AND KITCHEN I     3 2017-07-30       2017-07-31     2017-08-15      0.1940 0.1703 0.2070            False           False       1596.1429           1704.3929        0.9365         True          False        0.4875      0.3940           False            27020.0            20564.1659             6455.8341
+            family  fold history_start     cutoff  stores  observations  observed_days  missing_days  zero_sales_row_pct  total_sales  daily_mean  daily_median  daily_std  daily_min  daily_max  daily_p10  daily_p90  daily_p90_p10  mean_abs_daily_change  max_abs_daily_change
+HOME AND KITCHEN I     1    2016-06-29 2017-06-28      54         19656            364             1               2.803     656841.0    1804.508        1628.5    660.793       44.0     4821.0     1223.9     2470.9         1247.0                359.992                4080.0
+HOME AND KITCHEN I     2    2016-07-15 2017-07-14      54         19656            364             1               2.717     650597.0    1787.354        1620.5    638.794       44.0     4821.0     1223.9     2443.6         1219.7                348.431                4080.0
+HOME AND KITCHEN I     3    2016-07-31 2017-07-30      54         19656            364             1               2.640     650988.0    1788.429        1624.0    638.911       44.0     4821.0     1223.9     2443.6         1219.7                348.992                4080.0
+
+[LADIESWEAR] 판단 보류
+3번: 전체 RMSLE를 초과한 Fold=1,2,3
+1번: 모든 Fold에서 상위25% 변동/최근 급변 신호 없음
+2번: 하위50% 미충족 Fold=1,2,3; 급변 Fold=; 비율 미확인 Fold=
+    family  fold     cutoff validation_start validation_end  volatility    q50    q75  high_volatility  low_volatility  recent_7d_mean  preceding_28d_mean  recent_ratio  ratio_valid  recent_abrupt  family_rmsle  fold_rmsle  well_predicted  validation_actual  validation_predicted  validation_shortfall
+LADIESWEAR     1 2017-06-28       2017-06-29     2017-07-14      0.1796 0.1710 0.2116            False           False        659.5714            654.6786        1.0075         True          False        0.4700      0.3790           False             9995.0             9279.5765              715.4235
+LADIESWEAR     2 2017-07-14       2017-07-15     2017-07-30      0.1804 0.1671 0.2100            False           False        584.2857            660.7857        0.8842         True          False        0.4784      0.3993           False            10496.0             9907.6880              588.3120
+LADIESWEAR     3 2017-07-30       2017-07-31     2017-08-15      0.1798 0.1703 0.2070            False           False        614.1429            630.0357        0.9748         True          False        0.5051      0.3940           False             8711.0             9292.9071             -581.9071
+    family  fold history_start     cutoff  stores  observations  observed_days  missing_days  zero_sales_row_pct  total_sales  daily_mean  daily_median  daily_std  daily_min  daily_max  daily_p10  daily_p90  daily_p90_p10  mean_abs_daily_change  max_abs_daily_change
+LADIESWEAR     1    2016-06-29 2017-06-28      54         19656            364             1              33.054     229611.0     630.799         511.0    275.010        0.0     1433.0      400.0     1073.5          673.5                229.898                1302.0
+LADIESWEAR     2    2016-07-15 2017-07-14      54         19656            364             1              32.840     230254.0     632.566         510.0    275.570        0.0     1433.0      400.6     1089.6          689.0                229.390                1302.0
+LADIESWEAR     3    2016-07-31 2017-07-30      54         19656            364             1              32.647     231274.0     635.368         511.5    275.247        0.0     1433.0      404.3     1091.7          687.4                229.102                1302.0

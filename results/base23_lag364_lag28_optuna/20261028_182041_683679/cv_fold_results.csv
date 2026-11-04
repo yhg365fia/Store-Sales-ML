@@ -1,0 +1,4 @@
+fold,rmsle,best_iteration,hit_iteration_cap,predictions_file
+Fold 1,0.3789663835830142,5474,False,C:\projects\Store Sales-ML\results\base23_lag364_lag28_optuna\20261028_182041_683679\cv_cache\07590e4e8d7e52dbe5a3\fold_1_predictions.csv
+Fold 2,0.39930025427790566,6839,False,C:\projects\Store Sales-ML\results\base23_lag364_lag28_optuna\20261028_182041_683679\cv_cache\07590e4e8d7e52dbe5a3\fold_2_predictions.csv
+Fold 3,0.39398831278698276,7996,False,C:\projects\Store Sales-ML\results\base23_lag364_lag28_optuna\20261028_182041_683679\cv_cache\07590e4e8d7e52dbe5a3\fold_3_predictions.csv

@@ -1,0 +1,2 @@
+experiment,best_trial_number,mean_3fold,std_3fold_ddof1,mean_fold23,mean_best_iteration,backtest_n_estimators,fold_1_rmsle,fold_1_best_iteration,fold_2_rmsle,fold_2_best_iteration,fold_3_rmsle,fold_3_best_iteration,august_2016_backtest_rmsle
+base23_lag364_lag28,17,0.3907516502159676,0.01054625823731334,0.3966442835324442,6769.666666666667,6770,0.3789663835830142,5474,0.39930025427790566,6839,0.39398831278698276,7996,0.7477345821606495

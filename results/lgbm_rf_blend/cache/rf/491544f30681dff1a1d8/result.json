@@ -1,0 +1,67 @@
+{
+  "configuration": {
+    "schema_version": 1,
+    "model": "rf",
+    "parameters": {
+      "n_estimators": 200,
+      "max_depth": 18,
+      "min_samples_leaf": 5,
+      "max_features": 0.7,
+      "bootstrap": true,
+      "max_samples": 0.5,
+      "n_jobs": -1,
+      "random_state": 42
+    },
+    "features": [
+      "store_nbr",
+      "family",
+      "city",
+      "state",
+      "type",
+      "cluster",
+      "year",
+      "month",
+      "day",
+      "dayofweek",
+      "is_weekend",
+      "onpromotion",
+      "is_promotion",
+      "holiday_count",
+      "event_christmas",
+      "event_new_year",
+      "event_carnival",
+      "event_mothers_day",
+      "event_independence_day",
+      "event_city_foundation",
+      "event_good_friday",
+      "event_labor_day",
+      "event_other",
+      "sales_lag_364",
+      "sales_lag_28"
+    ],
+    "split": {
+      "name": "Fold 3",
+      "train_end": "2017-07-30",
+      "valid_start": "2017-07-31",
+      "valid_end": "2017-08-15"
+    },
+    "context": {
+      "data_sha256": "53bf8778eb9018bb7fc3921050a3047a9a3be263d772229d68ed546735284ce2",
+      "source_sha256": {
+        "main.py": "faec4b60e1437b57b8dc9642eb293784e7f6d5f6f2b7cc1ddc99bb8e4ddcf287",
+        "feature_engineering.py": "e6c79ceb5ba220997112991ec522dba495fd7d340e5485ada721e2060e0fe2f2"
+      },
+      "pandas": "3.1.0",
+      "numpy": "2.5.4"
+    },
+    "code_sha256": "4ea6c8d31a3a34685305a21741f2fa0b29a6b6c11a4d531676777b109fc04158",
+    "version": "1.9.1",
+    "policy": "train-category codes; initial lag NaNs=-1; float32; no row dropping"
+  },
+  "rmsle": 0.4415824006350326,
+  "best_iteration": null,
+  "train_rows": 2979504,
+  "valid_rows": 28512,
+  "origin": "trained in this run",
+  "predictions_file": "C:\\projects\\Store Sales-ML\\results\\lgbm_rf_blend\\cache\\rf\\491544f30681dff1a1d8\\predictions.csv"
+}

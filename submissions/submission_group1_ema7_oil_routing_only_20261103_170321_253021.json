@@ -1,0 +1,26 @@
+{
+  "source_old": "C:\\projects\\Store Sales-ML\\submissions\\submission_group1_lag16_ema7_oil_raw_20261102_232625_909206.csv",
+  "source_baseline": "C:\\projects\\Store Sales-ML\\submissions\\submission_base23_lag364_lag28_optuna_trial17_fulltrain_iter7418_20261029_182655_492521.csv",
+  "source_hashes": {
+    "C:\\projects\\Store Sales-ML\\submissions\\submission_group1_lag16_ema7_oil_raw_20261102_232625_909206.csv": "a8f0d468a90cc236558364998307346f9632a972f7138d398c68fde061b1a5e0",
+    "C:\\projects\\Store Sales-ML\\submissions\\submission_base23_lag364_lag28_optuna_trial17_fulltrain_iter7418_20261029_182655_492521.csv": "df06105fcc44c6a75aca230f2d7d8bd76581fbb2d2d6e43ba3ddf9250c04df60",
+    "C:\\projects\\Store Sales-ML\\data\\test.csv": "087ec1ecec76dbba9ea2adb48b8b2fd527c7c59adb82b0dfb9f6f82739400d26",
+    "C:\\projects\\Store Sales-ML\\data\\sample_submission.csv": "17505ec561d9bc64a3c10c3eb00474becf162d9053cebf014a58a6c82ed530c4"
+  },
+  "rule": "MAGAZINES replaced with Trial17; every other prediction unchanged",
+  "group1": [
+    "BEAUTY",
+    "HARDWARE",
+    "HOME APPLIANCES",
+    "LAWN AND GARDEN",
+    "LIQUOR,WINE,BEER",
+    "SCHOOL AND OFFICE SUPPLIES"
+  ],
+  "magazine_rows": 864,
+  "changed_values": 864,
+  "rows": 28512,
+  "training_performed": false,
+  "uploaded": false,
+  "csv": "C:\\projects\\Store Sales-ML\\submissions\\submission_group1_ema7_oil_routing_only_20261103_170321_253021.csv",
+  "csv_sha256": "2e378a72aefc42a3d6c451496b77689df763a804904064e8a0bef3cc06f8039b"
+}

@@ -1,0 +1,107 @@
+{
+  "features": [
+    "store_nbr",
+    "family",
+    "city",
+    "state",
+    "type",
+    "cluster",
+    "year",
+    "month",
+    "day",
+    "dayofweek",
+    "is_weekend",
+    "onpromotion",
+    "is_promotion",
+    "holiday_count",
+    "event_christmas",
+    "event_new_year",
+    "event_carnival",
+    "event_mothers_day",
+    "event_independence_day",
+    "event_city_foundation",
+    "event_good_friday",
+    "event_labor_day",
+    "event_other",
+    "sales_lag_364",
+    "sales_lag_28",
+    "oil_rolling16"
+  ],
+  "params": {
+    "boosting_type": "gbdt",
+    "objective": "regression",
+    "learning_rate": 0.023127655409786754,
+    "n_estimators": 8000,
+    "num_leaves": 127,
+    "max_depth": -1,
+    "min_child_samples": 50,
+    "min_split_gain": 0.0,
+    "subsample": 0.7742745551930794,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.9621753805232081,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "metric": "rmse",
+    "importance_type": "split",
+    "random_state": 42,
+    "n_jobs": -1,
+    "verbosity": -1
+  },
+  "folds": [
+    [
+      "fold1",
+      {
+        "name": "Fold 1",
+        "train_end": "2017-06-28",
+        "valid_start": "2017-06-29",
+        "valid_end": "2017-07-14"
+      }
+    ],
+    [
+      "fold2",
+      {
+        "name": "Fold 2",
+        "train_end": "2017-07-14",
+        "valid_start": "2017-07-15",
+        "valid_end": "2017-07-30"
+      }
+    ],
+    [
+      "fold3",
+      {
+        "name": "Fold 3",
+        "train_end": "2017-07-30",
+        "valid_start": "2017-07-31",
+        "valid_end": "2017-08-15"
+      }
+    ],
+    [
+      "backtest",
+      {
+        "name": "August 2016 Backtest",
+        "train_end": "2016-08-15",
+        "valid_start": "2016-08-16",
+        "valid_end": "2016-08-31"
+      }
+    ]
+  ],
+  "training_rounds": {
+    "fold1": 5474,
+    "fold2": 6839,
+    "fold3": 7996,
+    "backtest": 6770
+  },
+  "training": "All 33 families; no routing; same rounds as original Trial17 for each split",
+  "oil": {
+    "window_calendar_days": 16,
+    "shift": 0,
+    "missing_policy": "forward-fill only; leading NaN retained; min_periods16",
+    "availability": "Competition-provided oil on prediction dates when shift0"
+  },
+  "early_stopping": false,
+  "tuning": false,
+  "lightgbm_version": "4.7.0",
+  "oil_sha256": "944b23b857580f9d804399346fd3ed69bffcb7facfd98c55fdb408b8d057cca7",
+  "script_sha256": "54164077cb2540169037f5d948e8b5099e63c1120830bca5f4e866f4dccb7160",
+  "note": "Historical diagnostic; Trial17 and training rounds previously selected using CV. No submission generated."
+}

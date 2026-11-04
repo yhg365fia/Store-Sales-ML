@@ -1,0 +1,7 @@
+model,fold,rmsle,best_iteration,predictions_file
+lgbm,Fold 1,0.3789663835830142,5474.0,C:\projects\Store Sales-ML\results\lgbm_rf_blend\cache\lgbm\ff1e60e675aa4a47db02\predictions.csv
+rf,Fold 1,0.4293860365596385,,C:\projects\Store Sales-ML\results\lgbm_rf_blend\cache\rf\22d15561f3f885a2b3c9\predictions.csv
+lgbm,Fold 2,0.39930025427790566,6839.0,C:\projects\Store Sales-ML\results\lgbm_rf_blend\cache\lgbm\806286c4a21e21af7462\predictions.csv
+rf,Fold 2,0.4502436622785799,,C:\projects\Store Sales-ML\results\lgbm_rf_blend\cache\rf\bb6bad774bc056b07914\predictions.csv
+lgbm,Fold 3,0.39398831278698276,7996.0,C:\projects\Store Sales-ML\results\lgbm_rf_blend\cache\lgbm\71d38db1a9997347f561\predictions.csv
+rf,Fold 3,0.4415824006350326,,C:\projects\Store Sales-ML\results\lgbm_rf_blend\cache\rf\491544f30681dff1a1d8\predictions.csv
