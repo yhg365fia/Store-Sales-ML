@@ -1,348 +1,687 @@
-"""Trial17 plus targeted EMA16/EMA28 or lingerie calendar predictors.
-Three separate experiments, each with Fold1-3 and August 2016 backtest.
-Requires existing ROOT src/data/results. No other experiment script required.
-No early stopping, tuning or submission. Not an independent holdout (2017 CV settings).
---check-only validates features and cached references without training.
+
 """
-from __future__ import annotations
+Oil Raw Optuna Best Parameters -> Oil EMA7 experiment
+
+- Parameters: Oil Raw 30-Trial Optuna best_params.json
+- Features: Base23 + Lag364 + Lag28 + Oil EMA7
+- Oil Raw excluded from model inputs
+- Original main.py preprocessing
+- Original feature_engineering.py lag generation
+- Fold2, Fold3, 2016 Backtest
+- All 33 families
+- No Optuna / Early Stopping for each split / No submission
+"""
+
+from pathlib import Path
 import argparse
 import gc
-import hashlib
-import inspect
 import json
 import os
-import sys
-from datetime import datetime
-from pathlib import Path
-import lightgbm
+import hashlib
+
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMRegressor, early_stopping, log_evaluation
+import lightgbm as lgb
 
-ROOT = Path(r'C:\projects\Store Sales-ML')
-CACHE = ROOT / 'results/base23_lag364_lag28_optuna/20261028_182041_683679/cv_cache/07590e4e8d7e52dbe5a3'
-sys.path.insert(0, str(ROOT / 'src'))
 from main import main as original_pipeline
 from feature_engineering import add_lag_features
+
+
+# ============================================================
+# Configuration
+# ============================================================
+
+ROOT = Path(__file__).resolve().parent.parent
+
+OIL_OPTUNA_RUN = (
+    ROOT
+    / "src"
+    / "trial17_oil_raw_results"
+    / "20261107_031844_450587"
+)
+
+OUTPUT = OIL_OPTUNA_RUN / "ema7_only_cv_results"
 
 BASE23 = [
     "store_nbr", "family", "city", "state", "type", "cluster",
     "year", "month", "day", "dayofweek", "is_weekend",
     "onpromotion", "is_promotion", "holiday_count",
     "event_christmas", "event_new_year", "event_carnival",
-    "event_mothers_day", "event_independence_day", "event_city_foundation",
-    "event_good_friday", "event_labor_day", "event_other",
+    "event_mothers_day", "event_independence_day",
+    "event_city_foundation", "event_good_friday",
+    "event_labor_day", "event_other",
 ]
 
 LAGS = (364, 28)
+BASE_FEATURES = BASE23 + ["sales_lag_364", "sales_lag_28"]
+FEATURES = BASE_FEATURES + ["oil_ema_7"]
 
-EXPERIMENT = "base23_lag364_lag28"
-
-FEATURES = BASE23 + ["sales_lag_364", "sales_lag_28"]
-
-CATEGORICAL = ["store_nbr", "family", "city", "state", "type", "cluster"]
-
-KEYS = ["store_nbr", "family"]
-
-ROW_KEYS = ["date"] + KEYS
-
-TARGET = "sales_log"
-
-HORIZON = 16
-
-EXPECTED_TRAIN_ROWS = 3_008_016
-
-EXPECTED_VALID_ROWS = 28_512
-
-N_SERIES = 54 * 33
-
-N_ESTIMATORS = 8_000
-
-EARLY_STOPPING_ROUNDS = 150
-
-FOLDS = [
-    dict(name="Fold 1", train_end="2017-06-28",
-         valid_start="2017-06-29", valid_end="2017-07-14"),
-    dict(name="Fold 2", train_end="2017-07-14",
-         valid_start="2017-07-15", valid_end="2017-07-30"),
-    dict(name="Fold 3", train_end="2017-07-30",
-         valid_start="2017-07-31", valid_end="2017-08-15"),
+CATEGORICAL = [
+    "store_nbr", "family", "city", "state", "type", "cluster"
 ]
 
-AUGUST_BACKTEST = dict(
-    name="August 2016 Backtest",
-    train_end="2016-08-15",
-    valid_start="2016-08-16",
-    valid_end="2016-08-31",
-)
+KEYS = ["store_nbr", "family"]
+ROW_KEYS = ["date"] + KEYS
+TARGET = "sales_log"
 
-SPLITS = FOLDS + [AUGUST_BACKTEST]
+EXPECTED_ROWS = 3_008_016
+EXPECTED_VALID_ROWS = 28_512
 
-def check_configuration() -> None:
-    if len(BASE23) != 23 or len(set(BASE23)) != 23:
-        raise ValueError("BASE23 must have 23 unique columns")
-    if len(FEATURES) != 25 or len(set(FEATURES)) != 25:
-        raise ValueError("Expected exactly Base23 + lag364 + lag28")
-    if FEATURES != BASE23 + ["sales_lag_364", "sales_lag_28"]:
-        raise ValueError("Unexpected feature configuration")
+# Upper limit only: actual rounds are selected by validation Early Stopping.
+MAX_ESTIMATORS = 8000
+EARLY_STOPPING_ROUNDS = 150
 
-    for split in SPLITS:
-        cutoff = pd.Timestamp(split["train_end"])
-        start = pd.Timestamp(split["valid_start"])
-        stop = pd.Timestamp(split["valid_end"])
-        if start != cutoff + pd.Timedelta(days=1):
-            raise ValueError(f"Nonadjacent cutoff: {split['name']}")
-        if (stop - start).days + 1 != HORIZON:
-            raise ValueError(f"Validation must be 16 days: {split['name']}")
-        for lag in LAGS:
-            if stop - pd.Timedelta(days=lag) > cutoff:
-                raise ValueError(f"Future target would enter lag{lag}: {split['name']}")
+SPECS = {
+    "fold2": {
+        "train_end": "2017-07-14",
+        "valid_start": "2017-07-15",
+        "valid_end": "2017-07-30",
+    },
+    "fold3": {
+        "train_end": "2017-07-30",
+        "valid_start": "2017-07-31",
+        "valid_end": "2017-08-15",
+    },
+    "backtest": {
+        "train_end": "2016-08-15",
+        "valid_start": "2016-08-16",
+        "valid_end": "2016-08-31",
+    },
+}
 
-def prepare_features(raw: pd.DataFrame) -> pd.DataFrame:
-    check_configuration()
+
+# ============================================================
+# File helpers
+# ============================================================
+
+def save_csv(df, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".csv.tmp")
+    df.to_csv(temp, index=False, encoding="utf-8-sig")
+    temp.replace(path)
+
+
+def save_json(data, path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(".json.tmp")
+    temp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temp.replace(path)
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# ============================================================
+# Load OIL RAW Optuna parameters
+# ============================================================
+
+def load_oil_optuna(run_dir):
+
+    path = run_dir / "best_params.json"
+
+    if not path.is_file():
+        raise FileNotFoundError(
+            "Oil Raw Optuna best_params.json not found:\n"
+            f"{path}\n"
+            "Specify the actual Oil Raw Optuna result directory "
+            "using --run-dir. Baseline parameters will NOT be used."
+        )
+
+    best = json.loads(path.read_text(encoding="utf-8-sig"))
+
+    # Verify the tuned feature configuration.
+    expected_tuned_features = BASE_FEATURES + ["oil_raw"]
+
+    if best.get("features") != expected_tuned_features:
+        raise ValueError(
+            "Saved Optuna features differ from expected "
+            "Base25 + oil_raw configuration."
+        )
+
+    if not isinstance(best.get("params"), dict):
+        raise ValueError("Missing Oil Raw Optuna parameters.")
+
+    params = dict(best["params"])
+    # Do not reuse any stored iteration from the Optuna run.
+    params.pop("n_estimators", None)
+
+    if len(BASE23) != 23 or len(FEATURES) != 26:
+        raise ValueError("Unexpected feature count.")
+
+    print("\n========== PARAMETER SOURCE ==========")
+    print("Source: OIL RAW OPTUNA 30-TRIAL")
+    print("Best trial:", best.get("best_trial_number"))
+    print("Optuna Fold23 RMSLE:", best.get("fold23_rmsle"))
+    print("Iteration selection: per-split Early Stopping")
+    print("Maximum estimators:", MAX_ESTIMATORS)
+    print("Early stopping patience:", EARLY_STOPPING_ROUNDS)
+    print("Input features:", len(FEATURES))
+    print("Oil Raw: EXCLUDED")
+    print("Oil EMA7: INCLUDED")
+    print("Optuna rerun: NO")
+    print("======================================\n")
+
+    return params, best, path
+
+
+# ============================================================
+# Original feature preparation
+# ============================================================
+
+def prepare_features(raw):
+
     required = ["date", "sales"] + BASE23
+
     missing = [c for c in required if c not in raw.columns]
     if missing:
-        raise ValueError(f"main() missing required Train columns: {missing}")
+        raise ValueError(f"Missing input columns: {missing}")
 
     df = raw.loc[:, required].copy()
-    df["date"] = pd.to_datetime(df["date"], errors="raise")
-    df["sales"] = pd.to_numeric(df["sales"], errors="raise")
-    if (len(df) != EXPECTED_TRAIN_ROWS
-            or df["date"].min() != pd.Timestamp("2013-01-01")
-            or df["date"].max() != pd.Timestamp("2017-08-15")):
-        raise ValueError("Expected complete restored Train 2013-01-01..2017-08-15")
-    if df[KEYS + ["date"]].isna().any().any():
-        raise ValueError("Null panel key or date")
-    if df.duplicated(KEYS + ["date"]).any():
-        raise ValueError("Duplicate store_nbr/family/date")
-    if df[BASE23].isna().any().any():
-        raise ValueError("Null in Base23 predictors")
-    if (not np.isfinite(df["sales"].to_numpy(dtype=float)).all()
-            or (df["sales"] < 0).any()):
-        raise ValueError("Invalid sales targets")
 
-    weekday = df["date"].dt.day_of_week
-    if not np.array_equal(df["dayofweek"], weekday):
-        raise ValueError("dayofweek inconsistent with date")
-    if not np.array_equal(df["is_weekend"], (weekday >= 5).astype(int)):
-        raise ValueError("is_weekend inconsistent with date")
+    df["date"] = pd.to_datetime(df["date"])
+    df["sales"] = pd.to_numeric(df["sales"])
+
+    if len(df) != EXPECTED_ROWS:
+        raise ValueError(
+            f"Unexpected restored training rows: {len(df)}"
+        )
+
+    if (
+        df["date"].min() != pd.Timestamp("2013-01-01")
+        or df["date"].max() != pd.Timestamp("2017-08-15")
+    ):
+        raise ValueError("Unexpected train date range.")
+
+    if df.duplicated(KEYS + ["date"]).any():
+        raise ValueError("Duplicate store/family/date rows.")
+
+    if df[BASE23].isna().any().any():
+        raise ValueError("Missing Base23 feature values.")
+
+    if df["family"].nunique() != 33:
+        raise ValueError("Expected all 33 families.")
 
     df = df.sort_values(KEYS + ["date"]).reset_index(drop=True)
-    group_counts = df.groupby(KEYS, observed=True).size()
-    if len(group_counts) != N_SERIES or group_counts.nunique() != 1:
-        raise ValueError("Expected complete 1,782 store/family series")
-    gaps = df.groupby(KEYS, observed=True)["date"].diff()
-    if (gaps.notna() & gaps.ne(pd.Timedelta(days=1))).any():
-        raise ValueError("Missing calendar dates within a store/family series")
 
-    # Reuse the existing feature engineering helper, without changing any lags.
+    # Original lag feature engineering.
     df = add_lag_features(df, lags=LAGS)
-    positions = df.groupby(KEYS, observed=True).cumcount()
+
     for lag in LAGS:
         col = f"sales_lag_{lag}"
         if col not in df.columns:
-            raise ValueError(f"Existing lag helper did not create {col}")
-        if not df[col].isna().equals(positions.lt(lag)):
-            raise ValueError(f"Unexpected missing positions for {col}")
-        if not np.isfinite(df[col].dropna().to_numpy(dtype=float)).all():
-            raise ValueError(f"Nonfinite values in {col}")
+            raise ValueError(f"Missing original lag: {col}")
+
     df[TARGET] = np.log1p(df["sales"])
-    print(f"[DATA] Restored train={len(df):,}; computed lags={LAGS}; "
-          "initial lag NaNs retained.", flush=True)
-    print(f"[FEATURES] {EXPERIMENT}: {len(FEATURES)} predictors", flush=True)
-    print("[POLICY] Fixed-round diagnostic backtest; no early stopping.", flush=True)
+
     return df
 
-def make_split(df: pd.DataFrame, split: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
-    cutoff = pd.Timestamp(split["train_end"])
-    start = pd.Timestamp(split["valid_start"])
-    stop = pd.Timestamp(split["valid_end"])
+
+# ============================================================
+# Oil EMA7: existing preprocessed dcoilwtico only
+# ============================================================
+
+def add_oil_ema7(df, raw):
+
+    if "dcoilwtico" not in raw.columns:
+        raise ValueError(
+            "main.py must return preprocessed dcoilwtico."
+        )
+
+    daily = raw[["date", "dcoilwtico"]].copy()
+
+    daily["date"] = pd.to_datetime(daily["date"])
+    daily["dcoilwtico"] = pd.to_numeric(
+        daily["dcoilwtico"]
+    )
+
+    if daily["dcoilwtico"].isna().any():
+        raise ValueError("Preprocessed oil contains NaN.")
+
+    if not np.isfinite(daily["dcoilwtico"]).all():
+        raise ValueError("Nonfinite preprocessed oil.")
+
+    if daily.groupby("date")["dcoilwtico"].nunique().ne(1).any():
+        raise ValueError("Different oil values on the same date.")
+
+    daily = (
+        daily.drop_duplicates("date")
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    expected_dates = pd.date_range(
+        daily["date"].min(),
+        daily["date"].max(),
+        freq="D",
+    )
+
+    if not pd.DatetimeIndex(daily["date"]).equals(expected_dates):
+        raise ValueError("Missing daily oil dates.")
+
+    # The ONLY new model feature.
+    daily["oil_ema_7"] = (
+        daily["dcoilwtico"]
+        .ewm(span=7, adjust=False, min_periods=7)
+        .mean()
+    )
+
+    oil_map = daily.set_index("date")["oil_ema_7"]
+
+    df["oil_ema_7"] = df["date"].map(oil_map)
+
+    # The first six days are intentionally NaN.
+    bad = (
+        df["date"].gt(pd.Timestamp("2013-01-06"))
+        & df["oil_ema_7"].isna()
+    )
+
+    if bad.any():
+        raise ValueError("Unexpected EMA7 missing values.")
+
+    print("[OIL] Source: preprocessed dcoilwtico")
+    print("[OIL] EMA span=7, adjust=False, min_periods=7")
+    print("[OIL] Oil Raw NOT included in model features")
+
+    return df
+
+
+# ============================================================
+# Original split structure
+# ============================================================
+
+def make_split(df, spec):
+
+    cutoff = pd.Timestamp(spec["train_end"])
+    start = pd.Timestamp(spec["valid_start"])
+    end = pd.Timestamp(spec["valid_end"])
+
+    if start != cutoff + pd.Timedelta(days=1):
+        raise ValueError("Invalid split boundary.")
+
+    if (end - start).days + 1 != 16:
+        raise ValueError("Expected 16-day validation.")
+
     train = df.loc[df["date"].le(cutoff)]
-    valid = df.loc[df["date"].between(start, stop)]
-    counts = valid.groupby(KEYS, observed=True).size()
-    if train.empty or train["date"].max() != cutoff:
-        raise ValueError(f"Train cutoff mismatch: {split['name']}")
-    if (len(valid) != EXPECTED_VALID_ROWS
-            or len(counts) != N_SERIES
-            or not counts.eq(HORIZON).all()
-            or set(valid["date"]) != set(pd.date_range(start, stop))):
-        raise ValueError(f"Incomplete 16-day validation panel: {split['name']}")
+    valid = df.loc[df["date"].between(start, end)]
+
+    if len(valid) != EXPECTED_VALID_ROWS:
+        raise ValueError("Invalid validation row count.")
+
+    if valid["family"].nunique() != 33:
+        raise ValueError("Validation is missing families.")
+
     for lag in LAGS:
+        if end - pd.Timedelta(days=lag) > cutoff:
+            raise ValueError(f"Target leakage in Lag{lag}.")
+
         if valid[f"sales_lag_{lag}"].isna().any():
-            raise ValueError(f"Missing valid lag{lag}: {split['name']}")
-        if stop - pd.Timedelta(days=lag) > cutoff:
-            raise ValueError(f"Leakage in lag{lag}: {split['name']}")
+            raise ValueError(f"Missing validation Lag{lag}.")
+
     return train, valid
 
-def make_matrices(
-    train: pd.DataFrame, valid: pd.DataFrame, features: list[str]
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    x_train = train.loc[:, features].copy()
-    x_valid = valid.loc[:, features].copy()
+
+def make_matrices(train, valid):
+
+    xt = train[FEATURES].copy()
+    xv = valid[FEATURES].copy()
+
     for col in CATEGORICAL:
-        # Category vocabulary is determined by training rows only.
         categories = pd.Index(train[col].dropna().unique())
-        x_train[col] = pd.Categorical(x_train[col], categories=categories)
-        x_valid[col] = pd.Categorical(x_valid[col], categories=categories)
-        if x_valid[col].isna().any():
-            raise ValueError(f"Unseen validation category: {col}")
-    if list(x_train.columns) != features or list(x_valid.columns) != features:
-        raise ValueError("Train/Valid feature ordering changed")
-    return x_train, x_valid
 
-def rmsle(y_true, predicted_log) -> float:
-    y = np.asarray(y_true, dtype=float)
-    p = np.asarray(predicted_log, dtype=float)
-    if not np.isfinite(p).all():
-        raise ValueError("Nonfinite model prediction")
-    return float(np.sqrt(np.mean((np.log1p(y) - np.maximum(p, 0)) ** 2)))
+        xt[col] = pd.Categorical(
+            xt[col], categories=categories
+        )
 
-PARAMS = {'boosting_type': 'gbdt', 'objective': 'regression', 'learning_rate': 0.023127655409786754, 'n_estimators': 8000, 'num_leaves': 127, 'max_depth': -1, 'min_child_samples': 50, 'min_split_gain': 0.0, 'subsample': 0.7742745551930794, 'subsample_freq': 1, 'colsample_bytree': 0.9621753805232081, 'reg_alpha': 0.1, 'reg_lambda': 1.0, 'metric': 'rmse', 'importance_type': 'split', 'random_state': 42, 'n_jobs': -1, 'verbosity': -1}
+        xv[col] = pd.Categorical(
+            xv[col], categories=categories
+        )
+
+        if xv[col].isna().any():
+            raise ValueError(f"Unknown category in {col}.")
+
+    if "oil_raw" in xt.columns or "dcoilwtico" in xt.columns:
+        raise ValueError("Oil Raw entered training matrix.")
+
+    return xt, xv
 
 
-BASELINE_DIR=ROOT/'results/base23_lag364_lag28_optuna/20261028_182041_683679/best_trial_0017'
+# ============================================================
+# RMSLE and per-family report
+# ============================================================
 
-def read_json(path):
-    return json.loads(path.read_text(encoding='utf-8-sig'))
+def rmsle(actual, predicted):
 
-def load_reference(split,spec):
-    if split=='backtest':
-        directory=BASELINE_DIR
-        stem='august_2016_backtest'
-    else:
-        directory=CACHE
-        stem=f'fold_{split[-1]}'
-    meta=read_json(directory/f'{stem}.json')
-    expected_params=dict(PARAMS,n_estimators=6770) if split=='backtest' else PARAMS
-    if meta['features']!=FEATURES or meta['parameters']!=expected_params or meta['split']!=spec:
-        raise ValueError(f'{split}: baseline configuration mismatch')
-    rounds=6770 if split=='backtest' else int(meta['best_iteration'])
-    if rounds<=0: raise ValueError('Invalid training rounds')
-    p=pd.read_csv(directory/f'{stem}_predictions.csv',parse_dates=['date'])
-    if len(p)!=28512 or p.duplicated(ROW_KEYS).any():
-        raise ValueError('Invalid baseline keys')
-    if not np.isfinite(p[['y_true','pred_sales']]).all().all() or p[['y_true','pred_sales']].lt(0).any().any():
-        raise ValueError('Invalid baseline values')
-    expected=[.3789663835830142,.3993002542779057,.3939883127869828]
-    expected_score=.7477345821606495 if split=='backtest' else expected[int(split[-1])-1]
-    if not np.isclose(rmsle(p.y_true,np.log1p(p.pred_sales)),expected_score,atol=1e-9,rtol=0):
-        raise ValueError('Baseline score mismatch')
-    return p[ROW_KEYS+['y_true','pred_sales']].rename(columns={'y_true':'sales_ref','pred_sales':'trial17_pred'}),rounds
+    y = np.asarray(actual, dtype=float)
+    p = np.asarray(predicted, dtype=float)
 
-TARGET_FAMILIES=['LINGERIE','GROCERY II']
-EXPERIMENTS={
- 'ema16':dict(families=TARGET_FAMILIES,extra=['target_ema16_shift16']),
- 'ema28':dict(families=TARGET_FAMILIES,extra=['target_ema28_shift16']),
- 'lingerie_calendar':dict(families=['LINGERIE'],extra=['lingerie_month_start5','lingerie_days_to_month_end'])}
+    if not np.isfinite(y).all() or not np.isfinite(p).all():
+        raise ValueError("Nonfinite scores/predictions.")
 
-def add_experiment_features(df):
-    selected=df.family.isin(TARGET_FAMILIES)
-    for span in [16,28]:
-        col=f'target_ema{span}_shift16'
-        df[col]=df.groupby(KEYS,observed=True).sales.transform(
-            lambda s:s.shift(16).ewm(span=span,adjust=False,min_periods=span).mean()).where(selected)
-    mask=df.family.eq('LINGERIE')
-    df['lingerie_month_start5']=df.date.dt.day.le(5).astype(float).where(mask)
-    df['lingerie_days_to_month_end']=(df.date.dt.days_in_month-df.date.dt.day).astype(float).where(mask)
-    return df
+    if (y < 0).any():
+        raise ValueError("Negative actual sales.")
 
-def verify_features(df,spec):
-    cutoff=pd.Timestamp(spec['train_end'])
-    start,stop=pd.Timestamp(spec['valid_start']),pd.Timestamp(spec['valid_end'])
-    if stop-pd.Timedelta(days=16)>cutoff: raise ValueError('Future sales access')
-    for _,series in df[df.family.isin(TARGET_FAMILIES)].groupby(KEYS,observed=True):
-        hist=series[series.date<=cutoff].set_index('date').sales
-        valid=series[series.date.between(start,stop)]
-        for span in [16,28]:
-            expected=hist.ewm(span=span,adjust=False,min_periods=span).mean().reindex(valid.date-pd.Timedelta(days=16))
-            if not np.allclose(expected,valid[f'target_ema{span}_shift16']):
-                raise ValueError('EMA history/date mismatch')
+    p = np.maximum(p, 0)
 
-def run():
-    parser=argparse.ArgumentParser(description='Independent EMA16, EMA28 and lingerie calendar ablations against Trial17')
-    parser.add_argument('--check-only',action='store_true')
-    parser.add_argument('--cv-only',action='store_true')
-    parser.add_argument('--experiment',choices=['all']+list(EXPERIMENTS),default='all')
-    parser.add_argument('--output-dir',type=Path,default=Path(__file__).resolve().parent/'group4_feature_experiments')
-    args=parser.parse_args()
-    output=args.output_dir.resolve()
-    experiments=EXPERIMENTS if args.experiment=='all' else {args.experiment:EXPERIMENTS[args.experiment]}
-    specs=[(f'fold{i}',s) for i,s in enumerate(FOLDS,1)]
-    if not args.cv_only: specs.append(('backtest',AUGUST_BACKTEST))
-    refs={split:load_reference(split,spec) for split,spec in specs}
-    os.chdir(ROOT)
-    raw,test,holidays=original_pipeline()
-    df=add_experiment_features(prepare_features(raw))
-    del raw,test,holidays
+    return float(
+        np.sqrt(np.mean((np.log1p(y) - np.log1p(p)) ** 2))
+    )
+
+
+def score_predictions(pred, split):
+
+    rows = []
+
+    groups = [("ALL", pred)]
+    groups += list(
+        pred.groupby("family", observed=True, sort=True)
+    )
+
+    for family, group in groups:
+        rows.append({
+            "split": split,
+            "family": family,
+            "n_rows": len(group),
+            "rmsle": rmsle(
+                group["sales"],
+                group["pred_sales"],
+            ),
+        })
+
+    result = pd.DataFrame(rows)
+
+    if len(result) != 34:
+        raise ValueError("Expected ALL + 33 family scores.")
+
+    return result
+
+
+# ============================================================
+# Unicode-safe model save
+# ============================================================
+
+def save_model(model, path):
+
+    temp = path.with_suffix(".txt.tmp")
+
+    # Store the best iteration, not the extra trees trained during patience.
+    text = model.booster_.model_to_string(num_iteration=model.best_iteration_)
+    temp.write_text(text, encoding="utf-8")
+
+    restored = lgb.Booster(
+        model_str=temp.read_text(encoding="utf-8")
+    )
+
+    if restored.num_trees() != model.best_iteration_:
+        raise ValueError("Model save verification failed.")
+
+    temp.replace(path)
+
+
+# ============================================================
+# Train each split
+# ============================================================
+
+def progress(env):
+
+    iteration = env.iteration + 1
+
+    if iteration % 500 == 0:
+        print(
+            f"  iteration {iteration}/{env.end_iteration}",
+            flush=True,
+        )
+
+
+def eval_rmsle_log(y_true, y_pred):
+    """Exact competition RMSLE using the existing log1p target."""
+    # The existing prediction pipeline clips negative log predictions to 0.
+    pred_log = np.maximum(np.asarray(y_pred, dtype=float), 0.0)
+    true_log = np.asarray(y_true, dtype=float)
+    score = float(np.sqrt(np.mean((true_log - pred_log) ** 2)))
+    return "rmsle", score, False
+
+
+def train_split(df, name, params, output):
+
+    train, valid = make_split(df, SPECS[name])
+    xt, xv = make_matrices(train, valid)
+
+    print(f"\n========== {name.upper()} ==========")
+    print(f"Train rows: {len(train):,}")
+    print(f"Valid rows: {len(valid):,}")
+    print(f"Features: {len(FEATURES)}")
+    print(f"Maximum rounds: {MAX_ESTIMATORS} (not a fixed iteration)")
+    print("Parameters: Oil Raw Optuna Best")
+    print(f"Early stopping: ON (patience={EARLY_STOPPING_ROUNDS})", flush=True)
+
+    model_params = dict(params)
+    model_params["n_estimators"] = MAX_ESTIMATORS
+    # Use only competition-equivalent RMSLE for early stopping.
+    model_params["metric"] = "None"
+
+    model = lgb.LGBMRegressor(**model_params)
+
+    model.fit(
+        xt,
+        train[TARGET],
+        eval_set=[(xv, valid[TARGET])],
+        eval_names=["valid"],
+        eval_metric=eval_rmsle_log,
+        categorical_feature=CATEGORICAL,
+        callbacks=[
+            lgb.early_stopping(
+                stopping_rounds=EARLY_STOPPING_ROUNDS,
+                first_metric_only=True,
+                verbose=True,
+            ),
+            progress,
+        ],
+    )
+
+    best_iteration = int(model.best_iteration_)
+    if best_iteration <= 0:
+        raise ValueError("Early Stopping did not provide a best iteration.")
+    print(f"Best iteration ({name}): {best_iteration}", flush=True)
+    if best_iteration >= MAX_ESTIMATORS - EARLY_STOPPING_ROUNDS:
+        print("[WARNING] Best iteration is near the maximum rounds; "
+              "consider raising MAX_ESTIMATORS.", flush=True)
+
+    prediction_log = model.predict(
+        xv,
+        num_iteration=best_iteration,
+    )
+
+    if not np.isfinite(prediction_log).all():
+        raise ValueError("Invalid model predictions.")
+
+    predicted_sales = np.expm1(
+        np.maximum(prediction_log, 0)
+    )
+
+    pred = valid[ROW_KEYS + ["sales"]].copy()
+    pred["pred_sales"] = predicted_sales
+
+    scores = score_predictions(pred, name)
+
+    save_csv(pred, output / f"{name}_predictions.csv")
+    save_csv(scores, output / f"{name}_scores.csv")
+
+    save_model(model, output / f"{name}_model.txt")
+
+    importance = pd.DataFrame({
+        "feature": FEATURES,
+        "gain": model.booster_.feature_importance("gain"),
+        "split": model.booster_.feature_importance("split"),
+    })
+
+    save_csv(
+        importance.sort_values("gain", ascending=False),
+        output / f"{name}_importance.csv",
+    )
+
+    print("\n[SCORES]")
+    print(scores.round(6).to_string(index=False), flush=True)
+
+    del model, train, valid, xt, xv, pred
     gc.collect()
-    for split,spec in specs:
-        verify_features(df,spec)
-        _,valid=make_split(df,spec)
-        p=valid[ROW_KEYS+['sales']].merge(refs[split][0],on=ROW_KEYS,how='left',validate='one_to_one')
-        if len(p)!=28512 or not np.allclose(p.sales,p.sales_ref) or p.trial17_pred.isna().any():
-            raise ValueError('Cached baseline alignment failed')
-    print('[CHECK OK] Trial17 references and leakage checks passed.',flush=True)
-    if args.check_only:return
-    out=output/datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    out.mkdir(parents=True,exist_ok=False)
-    cfg=dict(experiments=experiments,base_features=FEATURES,params=PARAMS,
-        rounds={s:r[1] for s,r in refs.items()},training='All families; added features masked to target families; only target predictions replace Trial17',
-        policy='Three independent experiments. No EMA/calendar combination. Same original Trial17 rounds, no early stopping or tuning.',
-        shift=16,oil=False,lightgbm_version=lightgbm.__version__,source_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest())
-    (out/'config.json').write_text(json.dumps(cfg,indent=2),encoding='utf-8')
-    reports=[]
-    for split,spec in specs:
-        train,valid=make_split(df,spec)
-        reference,rounds=refs[split]
-        for name,setting in experiments.items():
-            folder=out/name
-            folder.mkdir(exist_ok=True)
-            features=FEATURES+setting['extra']
-            x_train,x_valid=make_matrices(train,valid,features)
-            model=LGBMRegressor(**dict(PARAMS,n_estimators=rounds))
-            print(f'[FIT] {name}/{split}, {rounds} rounds, {len(features)} features',flush=True)
-            model.fit(x_train,train[TARGET],categorical_feature=CATEGORICAL)
-            pred=np.asarray(model.predict(x_valid,num_iteration=rounds))
-            if not np.isfinite(pred).all():raise ValueError('Nonfinite predictions')
-            p=valid[ROW_KEYS+['sales','onpromotion']+setting['extra']].copy()
-            p['model_pred']=np.expm1(np.maximum(pred,0))
-            p=p.merge(reference,on=ROW_KEYS,how='left',validate='one_to_one')
-            mask=p.family.isin(setting['families'])
-            assert mask.sum()==864*len(setting['families'])
-            p['candidate_pred']=np.where(mask,p.model_pred,p.trial17_pred)
-            assert np.array_equal(p.loc[~mask,'candidate_pred'],p.loc[~mask,'trial17_pred'])
-            p['split']=split
-            p['experiment']=name
-            p['horizon_day']=(p.date-pd.Timestamp(spec['valid_start'])).dt.days+1
-            for label,col in [('baseline','trial17_pred'),('candidate','candidate_pred')]:
-                p[label+'_log_error']=np.log1p(p[col])-np.log1p(p.sales)
-                p[label+'_squared_log_error']=p[label+'_log_error']**2
-            p['delta_squared_log_error']=p.candidate_squared_log_error-p.baseline_squared_log_error
-            p.to_csv(folder/f'{split}_predictions.csv',index=False)
-            model.booster_.save_model(str(folder/f'{split}_model.txt'))
-            pd.DataFrame({'feature':features,'gain':model.booster_.feature_importance(importance_type='gain')}).to_csv(folder/f'{split}_importance.csv',index=False)
-            records=[]
-            partitions=[('overall','ALL',p),('target','TARGET',p[mask])]
-            for scope in ['family','store_nbr','date','horizon_day']:
-                partitions.extend((scope,str(key),b) for key,b in p[mask].groupby(scope,observed=True))
-            for scope,key,b in partitions:
-                base=np.sqrt(b.baseline_squared_log_error.mean())
-                new=np.sqrt(b.candidate_squared_log_error.mean())
-                records.append(dict(experiment=name,split=split,scope=scope,name=key,rows=len(b),trial17_rmsle=base,new_rmsle=new,delta=new-base,
-                    baseline_log_bias=b.baseline_log_error.mean(),candidate_log_bias=b.candidate_log_error.mean(),actual_sum=b.sales.sum(),pred_sum=b.candidate_pred.sum()))
-            scores=pd.DataFrame(records)
-            scores.to_csv(folder/f'{split}_scores.csv',index=False)
-            reports.append(scores)
-            pd.concat(reports,ignore_index=True).to_csv(out/'all_scores.csv',index=False)
-            print(scores[scores.scope.isin(['overall','family'])].round(6).to_string(index=False),flush=True)
-            del model,x_train,x_valid,p
-            gc.collect()
-    result=pd.concat(reports,ignore_index=True)
-    mean=result[(result.split!='backtest')&result.scope.isin(['overall','target','family'])].groupby(['experiment','scope','name'])[['trial17_rmsle','new_rmsle','delta']].mean().reset_index()
-    mean.to_csv(out/'cv_mean_scores.csv',index=False)
-    print('\n[CV MEAN]\n'+mean.round(6).to_string(index=False))
-    print(f'\nSaved to: {out}')
 
-if __name__=='__main__':run()
+    return scores
 
+
+# ============================================================
+# Summary
+# ============================================================
+
+def summarize(reports, output):
+
+    combined = pd.concat(reports, ignore_index=True)
+
+    fold23 = (
+        combined[combined["split"].isin(["fold2", "fold3"])]
+        .groupby("family", as_index=False)["rmsle"]
+        .mean()
+    )
+
+    fold23["split"] = "fold23_mean"
+
+    all_scores = pd.concat(
+        [combined, fold23],
+        ignore_index=True,
+    )
+
+    save_csv(
+        all_scores,
+        output / "all_validation_backtest_scores.csv",
+    )
+
+    family_table = (
+        all_scores.pivot(
+            index="family",
+            columns="split",
+            values="rmsle",
+        )
+        .reindex(
+            columns=["fold2", "fold3", "fold23_mean", "backtest"]
+        )
+        .reset_index()
+    )
+
+    save_csv(
+        family_table,
+        output / "family_error_comparison.csv",
+    )
+
+    print("\n========== OVERALL RMSLE ==========")
+    print(
+        all_scores[all_scores["family"] == "ALL"]
+        [["split", "rmsle"]]
+        .round(6)
+        .to_string(index=False)
+    )
+
+    print("\n========== FAMILY RMSLE ==========")
+    print(family_table.round(6).to_string(index=False))
+
+
+# ============================================================
+# Main
+# ============================================================
+
+def main():
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--run-dir",
+        type=Path,
+        default=OIL_OPTUNA_RUN,
+    )
+
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+    )
+
+    args = parser.parse_args()
+
+    run_dir = args.run_dir.resolve()
+    output = run_dir / "ema7_only_cv_results"
+
+    params, best, params_path = load_oil_optuna(
+        run_dir
+    )
+
+    os.chdir(ROOT)
+
+    raw, test, holidays = original_pipeline()
+
+    df = prepare_features(raw)
+    df = add_oil_ema7(df, raw)
+
+    del raw, test, holidays
+    gc.collect()
+
+    for name in SPECS:
+        tr, va = make_split(df, SPECS[name])
+        xt, xv = make_matrices(tr, va)
+        print(
+            f"[CHECK] {name}: "
+            f"train={len(tr):,} valid={len(va):,} "
+            f"features={xt.shape[1]} "
+            f"max_rounds={MAX_ESTIMATORS} early_stopping={EARLY_STOPPING_ROUNDS}",
+            flush=True,
+        )
+        del tr, va, xt, xv
+
+    gc.collect()
+
+    if args.check_only:
+        print("[CHECK OK] No models trained.")
+        return
+
+    output.mkdir(parents=True, exist_ok=True)
+
+    save_json({
+        "parameter_source": str(params_path),
+        "parameter_sha256": sha256(params_path),
+        "parameter_experiment": "Oil Raw Optuna 30-trial",
+        "best_trial_number": best.get("best_trial_number"),
+        "original_tuned_features": best["features"],
+        "experiment_features": FEATURES,
+        "params": params,
+        "max_estimators": MAX_ESTIMATORS,
+        "early_stopping_rounds": EARLY_STOPPING_ROUNDS,
+        "early_stopping_metric": "rmsle_log_target_clipped",
+        "oil": "EMA7 from preprocessed dcoilwtico",
+        "ema_span": 7,
+        "ema_adjust": False,
+        "ema_min_periods": 7,
+        "optuna_rerun": False,
+        "early_stopping": True,
+        "family_routing": False,
+        "lightgbm_version": lgb.__version__,
+    }, output / "config.json")
+
+    reports = []
+
+    for name in SPECS:
+        reports.append(
+            train_split(df, name, params, output)
+        )
+
+    summarize(reports, output)
+
+    print("\n[COMPLETE]")
+    print("Saved:", output)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,157 @@
+{
+  "features": {
+    "ema": [
+      "store_nbr",
+      "family",
+      "city",
+      "state",
+      "type",
+      "cluster",
+      "year",
+      "month",
+      "day",
+      "dayofweek",
+      "is_weekend",
+      "onpromotion",
+      "is_promotion",
+      "holiday_count",
+      "event_christmas",
+      "event_new_year",
+      "event_carnival",
+      "event_mothers_day",
+      "event_independence_day",
+      "event_city_foundation",
+      "event_good_friday",
+      "event_labor_day",
+      "event_other",
+      "sales_lag_364",
+      "sales_lag_28",
+      "group1_ema7_shift16"
+    ],
+    "rolling": [
+      "store_nbr",
+      "family",
+      "city",
+      "state",
+      "type",
+      "cluster",
+      "year",
+      "month",
+      "day",
+      "dayofweek",
+      "is_weekend",
+      "onpromotion",
+      "is_promotion",
+      "holiday_count",
+      "event_christmas",
+      "event_new_year",
+      "event_carnival",
+      "event_mothers_day",
+      "event_independence_day",
+      "event_city_foundation",
+      "event_good_friday",
+      "event_labor_day",
+      "event_other",
+      "sales_lag_364",
+      "sales_lag_28",
+      "group1_roll7_shift16"
+    ],
+    "oil": [
+      "store_nbr",
+      "family",
+      "city",
+      "state",
+      "type",
+      "cluster",
+      "year",
+      "month",
+      "day",
+      "dayofweek",
+      "is_weekend",
+      "onpromotion",
+      "is_promotion",
+      "holiday_count",
+      "event_christmas",
+      "event_new_year",
+      "event_carnival",
+      "event_mothers_day",
+      "event_independence_day",
+      "event_city_foundation",
+      "event_good_friday",
+      "event_labor_day",
+      "event_other",
+      "sales_lag_364",
+      "sales_lag_28",
+      "group1_ema7_shift16",
+      "group1_oil_raw"
+    ]
+  },
+  "routes": {
+    "ema": [
+      "BEAUTY",
+      "HOME APPLIANCES"
+    ],
+    "rolling": [
+      "LAWN AND GARDEN"
+    ],
+    "oil": [
+      "LIQUOR,WINE,BEER",
+      "SCHOOL AND OFFICE SUPPLIES"
+    ]
+  },
+  "default": "Trial17",
+  "training_mask": [
+    "BEAUTY",
+    "HARDWARE",
+    "HOME APPLIANCES",
+    "LAWN AND GARDEN",
+    "LIQUOR,WINE,BEER",
+    "MAGAZINES",
+    "SCHOOL AND OFFICE SUPPLIES"
+  ],
+  "params": {
+    "boosting_type": "gbdt",
+    "objective": "regression",
+    "learning_rate": 0.023127655409786754,
+    "n_estimators": 8000,
+    "num_leaves": 127,
+    "max_depth": -1,
+    "min_child_samples": 50,
+    "min_split_gain": 0.0,
+    "subsample": 0.7742745551930794,
+    "subsample_freq": 1,
+    "colsample_bytree": 0.9621753805232081,
+    "reg_alpha": 0.1,
+    "reg_lambda": 1.0,
+    "metric": "rmse",
+    "importance_type": "split",
+    "random_state": 42,
+    "n_jobs": -1,
+    "verbosity": -1
+  },
+  "rounds": {
+    "ema": {
+      "1": 4813,
+      "2": 4081,
+      "3": 5217,
+      "backtest": 4704
+    },
+    "rolling": {
+      "1": 4900,
+      "2": 4217,
+      "3": 5426,
+      "backtest": 4848
+    },
+    "oil": {
+      "1": 4906,
+      "2": 2793,
+      "3": 6160,
+      "backtest": 4620
+    }
+  },
+  "policy": "All-family training; direct Lag16 removed; shift16 retained; original rounds fixed, no early stopping or Optuna.",
+  "oil": "Contemporaneous competition-provided raw values, NaN retained",
+  "note": "Exploratory historical comparison; backtest rounds inherited from 2017 CV, not a pristine holdout.",
+  "lightgbm_version": "4.7.0",
+  "source_sha256": "e9a3cb7aff301400b0db0153d1828580a5321a780520aaf8045cd2aeaa36b0a6"
+}

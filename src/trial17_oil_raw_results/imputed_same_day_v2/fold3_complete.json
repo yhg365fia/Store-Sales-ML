@@ -1,0 +1,8 @@
+{
+  "files": {
+    "fold3_predictions.csv": "faacd2eb8cf475f305fc2ddea15291bb85e54912e13c56e221858ac52d34d496",
+    "fold3_scores.csv": "d86ba98da431db58cd735db52132bca5be132be988a6d9d79196cb1b86a21aeb",
+    "fold3_model.txt": "8082f0cd276c2960be78cfa8d15e2ba812c7198ef51551227e9453fb698252d9",
+    "fold3_importance.csv": "81a25f9a3b6e7a7041ca4f0a7ec0be17c5ce91f9dd4e36555f344f2d0359ccd8"
+  }
+}
