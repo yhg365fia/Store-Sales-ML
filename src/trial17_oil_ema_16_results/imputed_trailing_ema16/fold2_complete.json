@@ -1,8 +1,0 @@
-{
-  "files": {
-    "fold2_predictions.csv": "03597c522cd9b1c796b84ef6203e7359c5c9b568c671c46cd43f35d2ab1def7e",
-    "fold2_scores.csv": "a8fee718b9de326a2a8d487fd18119867d3567ddd4f68f4bc7fbcc8ec654d222",
-    "fold2_model.txt": "e90e101dedf404fde6a3c6ece8ddf09d502d3bc742b0827cd474c36f7cf15936",
-    "fold2_importance.csv": "aa2315967f3de74b865c4a9f94d4403a2e8e0ae4e11991501dae6817506f9f36"
-  }
-}

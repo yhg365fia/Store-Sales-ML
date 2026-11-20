@@ -29,7 +29,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_REFERENCE_DIR = (
-    ROOT / "src" / "trial17_store_cv_28d_results" / "20261110_192821_456115"
+    ROOT / "results" / "trial17_store_cv_28d_results" / "20261110_192821_456115"
 )
 
 KEYS = ["store_nbr", "family"]

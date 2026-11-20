@@ -16,7 +16,7 @@ import pandas as pd
 
 PROJECT_ROOT = Path(r"C:\projects\Store Sales-ML")
 REFERENCE_DIR = (
-    PROJECT_ROOT / "src" / "trial17_store_cv_28d_results" / "20261110_192821_456115"
+    PROJECT_ROOT / "results" / "trial17_store_cv_28d_results" / "20261110_192821_456115"
 )
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
@@ -391,7 +391,7 @@ def main() -> None:
     reference_dir = args.reference_dir.resolve()
     output = (
         args.output_dir.resolve() if args.output_dir is not None
-        else Path(__file__).resolve().parent / "trial17_single_feature_results"
+        else PROJECT_ROOT / "results" / "trial17_single_feature_results"
         / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     )
     print("Fold 2 + Fold 3 | Trial17 feature experiments", flush=True)

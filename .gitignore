@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+/.cache/
 
 # Virtual Environment
 .venv/
@@ -21,3 +22,11 @@ data/*
 Thumbs.db
 
 /docs/audit/
+
+# Keep experiment folder structure without tracking generated files.
+/results/**
+!/results/**/
+!/results/**/.gitkeep
+/submissions/**
+!/submissions/**/
+!/submissions/**/.gitkeep

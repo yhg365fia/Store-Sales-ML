@@ -19,7 +19,7 @@ TRAIN_START = pd.Timestamp("2013-01-01")
 TRAIN_END = pd.Timestamp("2017-06-28")
 VALID_START = pd.Timestamp("2017-06-29")
 VALID_END = pd.Timestamp("2017-07-14")
-FOLD1_REFERENCE = Path("src/trial17_fold1_backtest_results/20261111_140112_017715")
+FOLD1_REFERENCE = Path("results/trial17_fold1_backtest_results/20261111_140112_017715")
 
 
 EXPECTED_STORES = 54
@@ -510,7 +510,7 @@ def main():
     reference_dir = root / FOLD1_REFERENCE
     output = (
         args.output_dir.resolve() if args.output_dir is not None
-        else root / "src" / "trial17_fold1_model_routing_results" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        else root / "results" / "trial17_fold1_model_routing_results" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     )
 
     sys.path.insert(0, str(root / "src"))

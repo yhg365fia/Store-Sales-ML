@@ -1,9 +1,0 @@
-{
-  "both_folds_overall_rmsle_improved": false,
-  "stores_improved_fold2": 48,
-  "stores_improved_fold3": 21,
-  "stores_improved_both": 20,
-  "total_stores": 54,
-  "top5_share_of_positive_storewise_sum_improvements": 0.3000026810448162,
-  "note": "Store RMSLE gains are not additive to global RMSLE. The top-5 share is a concentration diagnostic based on positive storewise two-fold summed gains, NOT a formal adoption threshold. Adopt only after checking both global folds and breadth of store improvements."
-}

@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-DEFAULT_INPUT = Path(r'C:\projects\Store Sales-ML\src\backtest_outputs\20261103_155940_882756\predictions.csv')
+DEFAULT_INPUT = Path(r'C:\projects\Store Sales-ML\results\backtest_outputs\20261103_155940_882756\predictions.csv')
 KEYS = ['date', 'store_nbr', 'family']
 MODELS = {'ema7_oil': 'ema7_oil_mix_pred_sales', 'ema7': 'ema7_mix_pred_sales'}
 
@@ -112,7 +112,7 @@ def run():
     parser.add_argument('--input', type=Path, default=DEFAULT_INPUT)
     parser.add_argument('--candidate', choices=list(MODELS), default='ema7_oil')
     parser.add_argument('--output-dir', type=Path,
-                        default=Path(__file__).resolve().parent / 'backtest_error_analysis')
+                        default=Path(__file__).resolve().parents[1] / 'results/backtest_error_analysis')
     args = parser.parse_args()
     p = pd.read_csv(args.input, parse_dates=['date'])
     validate(p, MODELS[args.candidate])
