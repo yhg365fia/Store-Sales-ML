@@ -1,0 +1,3 @@
+﻿fold,model,feature,n_rows,baseline_rmsle,experiment_rmsle,delta_rmsle,improvement_rmsle,baseline_mean_log_error,experiment_mean_log_error,delta_mean_log_error,delta_abs_mean_log_error,baseline_best_iteration,experiment_best_iteration
+fold2,family_yearly_uplift_only,family_sales_uplift_lag364_7d_vs_origin28d,28512,0.39930025427790566,0.39644279061947746,-0.0028574636584282054,0.0028574636584282054,-0.01521275792135797,-0.011864766350848217,0.003347991570509752,-0.003347991570509752,6839,5184
+fold3,family_yearly_uplift_only,family_sales_uplift_lag364_7d_vs_origin28d,28512,0.39398831278698276,0.3988936365304429,0.004905323743460144,-0.004905323743460144,0.012015155460361682,0.004132406693589988,-0.007882748766771693,-0.007882748766771693,7996,5857

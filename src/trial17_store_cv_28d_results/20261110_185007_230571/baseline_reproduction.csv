@@ -1,0 +1,3 @@
+﻿fold,reference_rmsle,reproduced_rmsle,difference,within_tolerance,reference_best_iteration,reproduced_best_iteration
+fold2,0.3993,0.39930025427790566,2.5427790567578157e-07,True,6839,6839
+fold3,0.393988,0.39398831278698276,3.1278698275905015e-07,True,7996,7996
