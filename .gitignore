@@ -21,8 +21,6 @@ data/*
 .DS_Store
 Thumbs.db
 
-/docs/audit/
-
 # Keep experiment folder structure without tracking generated files.
 /results/**
 !/results/**/
