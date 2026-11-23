@@ -381,14 +381,424 @@ def load_trial17_predictions(
     return pred, {**reference.to_dict(), **scored, "fold": fold, "model": "trial17"}
 
 
+RF_REFERENCE = PROJECT_ROOT / "results/trial17_cv_family721_oilraw_results/20261119_164707_823423"
+CV = "store_sales_cv_28d"
+FEATURES = BASE_FEATURES + [CV]
+CANDIDATE_WEIGHT = 0.10
+
+
+def routing(ref, cfg):
+    store = ref.store_nbr.isin(cfg["store_cv"])
+    family = ref.family.isin(cfg["family_cv"])
+    uplift = ref.family.isin(cfg["family_uplift"])
+    sw, fw = cfg["store_weight"], cfg["family_weight"]
+    store_pred = np.where(store, ref.cv, ref.trial17)
+    family_pred = np.select([family, uplift], [ref.cv, ref.uplift], default=ref.trial17)
+    baseline = sw * np.log1p(store_pred) + fw * np.log1p(family_pred)
+    np.testing.assert_allclose(baseline, np.log1p(ref.blend_original), atol=1e-9)
+    return baseline, sw * store.astype(float) + fw * family.astype(float)
+
+
+def make_ridge(features):
+    from sklearn.compose import ColumnTransformer
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+    numeric = [col for col in features if col not in CATEGORICAL]
+    numeric_steps = make_pipeline(
+        SimpleImputer(strategy="median", add_indicator=True),
+        StandardScaler(with_mean=False),
+    )
+    preprocess = ColumnTransformer(
+        [
+            ("category", OneHotEncoder(handle_unknown="ignore", dtype=np.float32), CATEGORICAL),
+            ("numeric", numeric_steps, numeric),
+        ],
+        sparse_threshold=1.0,
+    )
+    return make_pipeline(preprocess, Ridge(alpha=1.0, solver="lsqr", tol=1e-5))
+
+
+def candidate_log_predictions(method, train, valid, fold):
+    print(f"[{fold}] {method.upper()} | {len(train):,} training rows", flush=True)
+    if method == "ridge":
+        estimator = make_ridge(FEATURES)
+        estimator.fit(train[FEATURES], train[TARGET])
+        prediction = estimator.predict(valid[FEATURES])
+        if not np.isfinite(prediction).all():
+            raise ValueError(f"{fold}: nonfinite Ridge prediction")
+        return prediction.clip(min=0)
+
+    from sklearn.ensemble import RandomForestRegressor
+    x, v = train[FEATURES].copy(), valid[FEATURES].copy()
+    for col in CATEGORICAL:
+        levels = pd.Index(train[col].dropna().unique())
+        x[col] = pd.Categorical(x[col], categories=levels).codes
+        v[col] = pd.Categorical(v[col], categories=levels).codes
+    # Missing historical lags/CV use -1; observed sales lags and CV are nonnegative.
+    rf = RandomForestRegressor(
+        n_estimators=300, max_depth=None, min_samples_leaf=30,
+        max_features=0.5, max_samples=0.3, random_state=42, n_jobs=-1,
+    )
+    print(f"{fold}: training RF on {len(train):,} rows", flush=True)
+    rf.fit(x.fillna(-1).to_numpy(dtype=np.float32), train[TARGET])
+    return rf.predict(v.fillna(-1).to_numpy(dtype=np.float32)).clip(min=0)
+
+
+def run_candidate_fold23(method, reference_dir, output_dir, check_only):
+    os.chdir(PROJECT_ROOT)
+    cfg = json.loads((reference_dir / "config.json").read_text(encoding="utf-8-sig"))
+    refs = {}
+    for fold in SPECS:
+        ref = pd.read_csv(reference_dir / f"{fold}_predictions.csv", parse_dates=["date"])
+        routing(ref, cfg)
+        if len(ref) != EXPECTED_VALID_ROWS or ref.family.nunique() != EXPECTED_FAMILIES:
+            raise ValueError(f"{fold}: incomplete all-family reference")
+        refs[fold] = ref
+    if check_only:
+        print("Fold 2/3 references and original routing verified.")
+        return
+
+    raw, test, holidays = original_pipeline()
+    del test, holidays
+    df = prepare_features(raw)
+    del raw
+    gc.collect()
+    daily = df.groupby(["date", "store_nbr"], observed=True).sales.sum().unstack()
+    daily = daily.asfreq("D")
+    history = daily.shift(1).rolling(28, min_periods=28)
+    mean = history.mean()
+    cv = history.std(ddof=1).div(mean.where(mean > 0))
+    keys = pd.MultiIndex.from_frame(df[["date", "store_nbr"]])
+    df[CV] = cv.stack().reindex(keys).to_numpy()
+
+    output = output_dir or PROJECT_ROOT / f"results/{method}_cv_fold23" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    output.mkdir(parents=True)
+    scores = []
+    for fold, spec in SPECS.items():
+        train = df.loc[df.date <= spec["train_end"]]
+        valid = df.loc[df.date.between(spec["valid_start"], spec["valid_end"])].copy()
+        valid[CV] = valid.store_nbr.map(cv.loc[spec["valid_start"]]).astype(float)
+        ref = valid[ROW_KEYS + ["sales"]].merge(
+            refs[fold], on=ROW_KEYS, how="left", validate="one_to_one",
+            suffixes=("_pipeline", ""), sort=False,
+        )
+        assert len(ref) == len(refs[fold]) == EXPECTED_VALID_ROWS
+        np.testing.assert_allclose(ref.sales, ref.sales_pipeline)
+        baseline, cv_share = routing(ref, cfg)
+
+        candidate_log = candidate_log_predictions(method, train, valid, fold)
+        cv_log = np.log1p(ref.cv)
+        mixed_cv = cv_log + CANDIDATE_WEIGHT * (candidate_log - cv_log)
+        mixed_final = baseline + cv_share * (mixed_cv - cv_log)
+        actual = np.log1p(ref.sales)
+        for scope, mask, before, after in [
+            (f"{method}_only_all_rows_vs_cv", np.ones(len(ref), dtype=bool), cv_log, candidate_log),
+            (f"{method}_only_all_rows_vs_final", np.ones(len(ref), dtype=bool), baseline, candidate_log),
+            ("cv_component", cv_share > 0, cv_log, mixed_cv),
+            ("final_all_rows", np.ones(len(ref), dtype=bool), baseline, mixed_final),
+        ]:
+            old = np.sqrt(np.mean((before[mask] - actual[mask]) ** 2))
+            new = np.sqrt(np.mean((after[mask] - actual[mask]) ** 2))
+            scores.append(dict(fold=fold, scope=scope, rows=int(mask.sum()),
+                               baseline_rmsle=old, candidate_rmsle=new, delta=new-old))
+        pred = ref[ROW_KEYS + ["sales", "cv", "blend_original"]].copy()
+        pred["cv_share"] = cv_share
+        pred[f"{method}_sales"] = np.expm1(candidate_log)
+        pred[f"final_{method}_blend"] = np.expm1(mixed_final)
+        save_csv(pred, output / f"{fold}_predictions.csv")
+        save_csv(pd.DataFrame(scores), output / "scores.csv")
+        del train, valid
+        gc.collect()
+    print(pd.DataFrame(scores).to_string(index=False))
+    print(output)
+
+
+
+def fit_fixed_or_early(xt, yt, xv, yv, n_iter=None, extra_params=None, init=None, init_v=None):
+    """n_iter=None: early stopping on (xv, yv). Otherwise fixed n_iter rounds (valid only logged).
+    init/init_v: optional base-margin (e.g. Ridge log prediction); returned prediction includes it."""
+    params = {**TRIAL17_PARAMS, **(extra_params or {})}
+    callbacks = [lgb.log_evaluation(500)]
+    if n_iter is None:
+        callbacks.insert(0, lgb.early_stopping(EARLY_STOPPING_ROUNDS, first_metric_only=True, verbose=False))
+    else:
+        params["n_estimators"] = int(n_iter)
+    model = lgb.LGBMRegressor(**params)
+    model.fit(xt, yt, init_score=init, eval_set=[(xv, yv)], eval_names=["valid"], eval_metric="rmse",
+              eval_init_score=None if init_v is None else [init_v],
+              categorical_feature=CATEGORICAL, callbacks=callbacks)
+    best = int(n_iter) if n_iter is not None else int(model.best_iteration_ or MAX_ESTIMATORS)
+    pred = model.predict(xv, num_iteration=best)
+    return (pred if init_v is None else pred + init_v), best
+
+
+def run_variant_fold23(variant, reference_dir, output_dir, iter_mode="early", ridge_features=25):
+    """Single global LightGBM variant vs Trial17 on folds 2/3 (25 features, TRIAL17_PARAMS, no post-processing).
+
+    variant: "linear_tree" (linear_tree=True, linear_lambda=1.0) or
+             "ridge_residual" (Ridge log prediction as init_score; final = Ridge + trees, Ridge in-sample on train).
+    iter_mode: "early" (early stopping on scored fold, like Trial17) or "cross" (Trial17's other-fold iteration).
+    """
+    import time
+    os.chdir(PROJECT_ROOT)
+    other = {"fold2": "fold3", "fold3": "fold2"}
+    reference_scores = pd.read_csv(reference_dir / "model_scores_and_iterations.csv")
+    reference_scores = reference_scores.loc[reference_scores["model"].eq("baseline")].set_index("fold")
+    raw, test, holidays = original_pipeline()
+    df = prepare_features(raw)
+    del raw, test, holidays
+    gc.collect()
+    store_ratio = add_store_sales_ratio(df)
+    family_uplift = add_family_sales_uplift(df)
+    ridge_cols = BASE_FEATURES
+    cv = None
+    if variant == "ridge_residual" and ridge_features == 26:
+        daily = df.groupby(["date", "store_nbr"], observed=True).sales.sum().unstack().asfreq("D")
+        history = daily.shift(1).rolling(28, min_periods=28)
+        mean = history.mean()
+        cv = history.std(ddof=1).div(mean.where(mean > 0))
+        df[CV] = cv.stack().reindex(pd.MultiIndex.from_frame(df[["date", "store_nbr"]])).to_numpy()
+        ridge_cols = FEATURES
+
+    extra = {"linear_tree": True, "linear_lambda": 1.0} if variant == "linear_tree" else {}
+    output = output_dir or PROJECT_ROOT / f"results/{variant}_fold23" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    output.mkdir(parents=True)
+    save_json({"variant": variant, "features": BASE_FEATURES, "params": {**TRIAL17_PARAMS, **extra},
+               "iter_mode": iter_mode, "ridge_features": ridge_cols if variant == "ridge_residual" else None,
+               "ridge": "alpha=1.0 lsqr, one-hot categoricals, median impute + indicator, scaler; in-sample on train",
+               "folds": SPECS, "reference_dir": str(reference_dir), "post_processing": "none"},
+              output / "config.json")
+    print(f"{variant} | Fold 2 + Fold 3 | iter_mode={iter_mode} | output {output}", flush=True)
+
+    overall = []
+    for n_fold, (fold, spec) in enumerate(SPECS.items(), 1):
+        t_fold = time.time()
+        train, valid = make_split(df, spec, store_ratio, family_uplift)
+        if cv is not None:
+            valid[CV] = valid.store_nbr.map(cv.loc[spec["valid_start"]]).astype(float)
+        base, base_score = load_trial17_predictions(valid, fold, reference_dir, reference_scores)
+        print(f"\n[{fold.upper()} {n_fold}/2] Trial17 RMSLE={base_score['rmsle']:.6f} | "
+              f"train={len(train):,} valid={len(valid):,}", flush=True)
+        init = init_v = None
+        ridge_score = None
+        if variant == "ridge_residual":
+            t0 = time.time()
+            ridge = make_ridge(ridge_cols)
+            ridge.fit(train[ridge_cols], train[TARGET])
+            init = ridge.predict(train[ridge_cols])
+            init_v = ridge.predict(valid[ridge_cols])
+            ridge_score = metrics(valid["sales"].to_numpy(), init_v)["rmsle"]
+            print(f"[{fold.upper()}] Ridge({len(ridge_cols)}) RMSLE={ridge_score:.6f} | "
+                  f"train-period RMSE={np.sqrt(np.mean((init - train[TARGET]) ** 2)):.6f} | "
+                  f"{time.time() - t0:.0f}s", flush=True)
+        n_iter = int(reference_scores.loc[other[fold], "best_iteration"]) if iter_mode == "cross" else None
+        if iter_mode == "cross":
+            print(f"[{fold.upper()}] fixed {n_iter} iterations (Trial17 {other[fold]})", flush=True)
+            # Fair baseline: Trial17 with the same cross-fold iteration (cached from the per-group rerun).
+            cache = PROJECT_ROOT / "results/trial17_fixediter_cache" / f"{fold}_iter{n_iter}.npy"
+            if not cache.exists():
+                raise FileNotFoundError(f"Run the fixed-iteration Trial17 first: {cache}")
+            base = np.load(cache)
+            base_score = {**metrics(valid["sales"].to_numpy(), base), "best_iteration": n_iter}
+            print(f"[{fold.upper()}] Trial17 fixed-iter RMSLE={base_score['rmsle']:.6f}", flush=True)
+        xt, xv = make_matrices(train, valid, BASE_FEATURES)
+        t0 = time.time()
+        pred, best = fit_fixed_or_early(xt, train[TARGET], xv, valid[TARGET], n_iter, extra, init, init_v)
+        del xt, xv
+        gc.collect()
+        actual = valid["sales"].to_numpy(dtype=np.float64)
+        row = {**scored_pair(actual, base, pred, fold, model=variant),
+               "baseline_best_iteration": base_score["best_iteration"], "experiment_best_iteration": best,
+               "ridge_only_rmsle": ridge_score, "minutes": (time.time() - t_fold) / 60}
+        overall.append(row)
+        print(f"[{fold.upper()} DONE] {variant} RMSLE={row['experiment_rmsle']:.6f} | Trial17 "
+              f"{row['baseline_rmsle']:.6f} | diff {row['delta_rmsle']:+.6f} | best_iter={best} | "
+              f"train {(time.time() - t0) / 60:.1f} min", flush=True)
+        groups = []
+        for column in ["store_nbr", "family"]:
+            report = row_group_report(valid, base, pred, fold, column)
+            report.insert(1, "group_type", column)
+            groups.append(report.rename(columns={column: "group"}))
+        save_csv(pd.concat(groups, ignore_index=True), output / f"{fold}_group_comparison.csv")
+        paired = valid[ROW_KEYS + ["sales", "onpromotion"]].copy()
+        paired["baseline_pred_log_unclipped"] = base
+        paired["experiment_pred_log_unclipped"] = pred
+        if init_v is not None:
+            paired["ridge_pred_log"] = init_v
+        save_csv(paired, output / f"{fold}_paired_predictions.csv")
+        save_csv(pd.DataFrame(overall), output / "overall_comparison.csv")
+        del train, valid, paired
+        gc.collect()
+    print(pd.DataFrame(overall).round(6).to_string(index=False))
+    print("[COMPLETE]", output, flush=True)
+
+
+BT_SPECS = {
+    "backtest1": {"train_end": "2016-07-30", "valid_start": "2016-07-31", "valid_end": "2016-08-15"},
+    "backtest2": {"train_end": "2016-08-15", "valid_start": "2016-08-16", "valid_end": "2016-08-31"},
+}
+
+
+def run_group_fold23(group_col, reference_dir, output_dir, fixed_from=None, specs=None):
+    """Per-group LightGBM (one model per store or family) vs global Trial17, folds 2/3.
+
+    Only the training unit changes: same 25 features (constant ones kept), TRIAL17_PARAMS,
+    early stopping on each group's own validation rows, no post-processing.
+    fixed_from: earlier early-stopping run dir; each model (groups and global Trial17) then uses
+    the best_iteration chosen on the OTHER fold, with no early stopping on the scored fold.
+    """
+    other = {"fold2": "fold3", "fold3": "fold2"}
+    fixed_iters = None
+    if fixed_from is not None:
+        prev = pd.read_csv(fixed_from / "group_iterations.csv")
+        fixed_iters = {(r.fold, r[group_col]): int(r.best_iteration) for _, r in prev.iterrows()}
+    import time
+    os.chdir(PROJECT_ROOT)
+    reference_scores = pd.read_csv(reference_dir / "model_scores_and_iterations.csv")
+    reference_scores = reference_scores.loc[reference_scores["model"].eq("baseline")].set_index("fold")
+    raw, test, holidays = original_pipeline()
+    df = prepare_features(raw)
+    del raw, test, holidays
+    gc.collect()
+    store_ratio = add_store_sales_ratio(df)
+    family_uplift = add_family_sales_uplift(df)
+
+    tag = "store" if group_col == "store_nbr" else "family"
+    retrain_base = specs is not None  # backtests: no saved Trial17 with identical settings -> retrain in-script
+    specs = specs or SPECS
+    suffix = ("_fixediter" if fixed_iters else "") + ("_backtest" if retrain_base else "_fold23")
+    output = output_dir or PROJECT_ROOT / f"results/per_{tag}_lgbm{suffix}" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    output.mkdir(parents=True)
+    save_json({"group_col": group_col, "features": BASE_FEATURES, "params": TRIAL17_PARAMS,
+               "early_stopping_rounds": EARLY_STOPPING_ROUNDS, "folds": specs,
+               "trial17": "retrained in-script, early stopping on scored window" if retrain_base else "saved predictions",
+               "reference_dir": str(reference_dir), "post_processing": "none",
+               "iterations": (f"fixed: other fold's best_iteration from {fixed_from}; Trial17 global "
+                              "retrained with other fold's best_iteration" if fixed_iters
+                              else "early stopping on scored fold")}, output / "config.json")
+    print(f"Per-{tag} LightGBM | Fold 2 + Fold 3 | output {output}", flush=True)
+
+    overall, groups_out, iters = [], [], []
+    for fold, spec in specs.items():
+        t_fold = time.time()
+        train, valid = make_split(df, spec, store_ratio, family_uplift)
+        if retrain_base:
+            print(f"\n[{fold.upper()}] Trial17 global train (early stopping) | train={len(train):,}", flush=True)
+            xt, xv = make_matrices(train, valid, BASE_FEATURES)
+            base, n_base = fit_fixed_or_early(xt, train[TARGET], xv, valid[TARGET])
+            del xt, xv
+            gc.collect()
+            base_score = {**metrics(valid["sales"].to_numpy(), base), "best_iteration": n_base}
+            print(f"[{fold.upper()}] Trial17 best_iter={n_base} | {(time.time() - t_fold) / 60:.1f} min", flush=True)
+        else:
+            base, base_score = load_trial17_predictions(valid, fold, reference_dir, reference_scores)
+        print(f"\n[{fold.upper()}] Trial17 RMSLE={base_score['rmsle']:.6f}", flush=True)
+        if fixed_iters:
+            n_base = int(reference_scores.loc[other[fold], "best_iteration"])
+            print(f"[{fold.upper()}] Trial17 global retrain, fixed {n_base} iterations "
+                  f"(from {other[fold]})", flush=True)
+            t0 = time.time()
+            cache = PROJECT_ROOT / "results/trial17_fixediter_cache" / f"{fold}_iter{n_base}.npy"
+            if cache.exists():
+                base = np.load(cache)
+                print(f"[{fold.upper()}] reuse cached Trial17 fixed-iter predictions {cache}", flush=True)
+            else:
+                xt, xv = make_matrices(train, valid, BASE_FEATURES)
+                base, _ = fit_fixed_or_early(xt, train[TARGET], xv, valid[TARGET], n_base)
+                del xt, xv
+                gc.collect()
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                np.save(cache, base)
+            base_score = {**metrics(valid["sales"].to_numpy(), base), "best_iteration": n_base}
+            print(f"[{fold.upper()}] Trial17 fixed-iter RMSLE={base_score['rmsle']:.6f} | "
+                  f"{(time.time() - t0) / 60:.1f} min", flush=True)
+        pred = np.full(len(valid), np.nan)
+        labels = sorted(valid[group_col].unique())
+        for n, label in enumerate(labels, 1):
+            t0 = time.time()
+            tr = train.loc[train[group_col].eq(label)]
+            vmask = valid[group_col].eq(label).to_numpy()
+            va = valid.loc[vmask]
+            xt, xv = make_matrices(tr, va, BASE_FEATURES)
+            print(f"[{fold.upper()} {tag} {n}/{len(labels)}: {label}] train={len(tr):,} valid={len(va):,}", flush=True)
+            n_fixed = fixed_iters[(other[fold], label)] if fixed_iters else None
+            pred[vmask], best = fit_fixed_or_early(xt, tr[TARGET], xv, va[TARGET], n_fixed)
+            g_base = metrics(va["sales"].to_numpy(), base[vmask])["rmsle"]
+            g_exp = metrics(va["sales"].to_numpy(), pred[vmask])["rmsle"]
+            iters.append(dict(fold=fold, **{group_col: label}, best_iteration=best, seconds=time.time() - t0))
+            print(f"  best_iter={best} | RMSLE group {g_exp:.6f} (Trial17 {g_base:.6f}, "
+                  f"diff {g_exp - g_base:+.6f}) | {time.time() - t0:.1f}s | fold elapsed {time.time() - t_fold:.0f}s",
+                  flush=True)
+            del xt, xv, tr, va
+            gc.collect()
+        actual = valid["sales"].to_numpy(dtype=np.float64)
+        overall.append({**scored_pair(actual, base, pred, fold, model=f"per_{tag}"),
+                        "baseline_best_iteration": base_score["best_iteration"],
+                        "blend50_rmsle": metrics(actual, 0.5 * base + 0.5 * pred)["rmsle"],
+                        "minutes": (time.time() - t_fold) / 60})
+        for column in ["store_nbr", "family"]:
+            report = row_group_report(valid, base, pred, fold, column)
+            report.insert(1, "group_type", column)
+            report = report.rename(columns={column: "group"})
+            groups_out.append(report)
+        paired = valid[ROW_KEYS + ["sales", "onpromotion"]].copy()
+        paired["baseline_pred_log_unclipped"] = base
+        paired["experiment_pred_log_unclipped"] = pred
+        save_csv(paired, output / f"{fold}_paired_predictions.csv")
+        save_csv(pd.DataFrame(overall), output / "overall_comparison.csv")
+        save_csv(pd.concat(groups_out, ignore_index=True), output / "group_comparison.csv")
+        save_csv(pd.DataFrame(iters), output / "group_iterations.csv")
+        print(f"[{fold.upper()} DONE] blend50 RMSLE={overall[-1]['blend50_rmsle']:.6f}", flush=True)
+        print(f"[{fold.upper()} DONE] per_{tag} RMSLE={overall[-1]['experiment_rmsle']:.6f} | "
+              f"Trial17 {overall[-1]['baseline_rmsle']:.6f} | diff {overall[-1]['delta_rmsle']:+.6f} | "
+              f"{overall[-1]['minutes']:.1f} min", flush=True)
+        del train, valid, paired
+        gc.collect()
+    print(pd.DataFrame(overall).round(6).to_string(index=False))
+    print("[COMPLETE]", output, flush=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference-dir", type=Path, default=REFERENCE_DIR)
+    parser.add_argument("--reference-dir", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--no-save-models", action="store_true")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--ridge-cv-fold23", action="store_true", help="Evaluate Ridge on folds 2 and 3")
+    modes.add_argument("--rf-cv-fold23", action="store_true",
+                        help="Compare standalone RF and the fixed routed blend on folds 2/3")
+    modes.add_argument("--group-fold23", choices=["store_nbr", "family"],
+                        help="One Trial17 LightGBM per store or per family on folds 2/3")
+    parser.add_argument("--fixed-iter-from", type=Path,
+                        help="With --group-fold23: earlier run dir; use the other fold's best_iteration")
+    modes.add_argument("--variant-fold23", choices=["linear_tree", "ridge_residual"],
+                        help="Single global LightGBM variant vs Trial17 on folds 2/3")
+    parser.add_argument("--iter-mode", choices=["early", "cross"], default="early")
+    parser.add_argument("--backtests", nargs="+", choices=list(BT_SPECS),
+                        help="With --group-fold23: run on 2016 backtests instead (Trial17 retrained in-script)")
+    parser.add_argument("--ridge-features", type=int, choices=[25, 26], default=25)
     args = parser.parse_args()
-    reference_dir = args.reference_dir.resolve()
+    if args.variant_fold23:
+        run_variant_fold23(args.variant_fold23, (args.reference_dir or REFERENCE_DIR).resolve(),
+                           args.output_dir.resolve() if args.output_dir else None,
+                           args.iter_mode, args.ridge_features)
+        return
+    if args.group_fold23:
+        run_group_fold23(args.group_fold23, (args.reference_dir or REFERENCE_DIR).resolve(),
+                         args.output_dir.resolve() if args.output_dir else None,
+                         args.fixed_iter_from.resolve() if args.fixed_iter_from else None,
+                         {k: BT_SPECS[k] for k in args.backtests} if args.backtests else None)
+        return
+    if args.rf_cv_fold23 or args.ridge_cv_fold23:
+        method = "ridge" if args.ridge_cv_fold23 else "rf"
+        run_candidate_fold23(method, (args.reference_dir or RF_REFERENCE).resolve(),
+                      args.output_dir.resolve() if args.output_dir else None, args.check_only)
+        return
+    reference_dir = (args.reference_dir or REFERENCE_DIR).resolve()
     output = (
         args.output_dir.resolve() if args.output_dir is not None
         else PROJECT_ROOT / "results" / "trial17_single_feature_results"
